@@ -117,7 +117,7 @@ export function StudentsPanel({
           }}
         >
           <DialogTrigger asChild>
-            <Button className="rounded-xl" onClick={openAdd}>
+            <Button className="rounded-none" onClick={openAdd}>
               + Tambah Siswa
             </Button>
           </DialogTrigger>
@@ -158,7 +158,7 @@ export function StudentsPanel({
                 </Select>
               </div>
               <div className="flex gap-2">
-                <Button type="submit" className="flex-1 rounded-xl" disabled={isPending}>
+                <Button type="submit" className="flex-1 rounded-none" disabled={isPending}>
                   {isPending ? "Menyimpan..." : "Simpan"}
                 </Button>
                 {editing && (
@@ -167,7 +167,7 @@ export function StudentsPanel({
                       <Button
                         type="button"
                         variant="destructive"
-                        className="rounded-xl"
+                        className="rounded-none"
                         disabled={isPending}
                       >
                         Hapus
@@ -192,12 +192,12 @@ export function StudentsPanel({
             </form>
           </DialogContent>
         </Dialog>
-        <Button variant="outline" className="rounded-xl">
+        <Button variant="outline" className="rounded-none">
           <Upload className="mr-2 h-4 w-4" /> Import Excel
         </Button>
         <div className="ml-auto flex flex-wrap items-center gap-2">
           <Select value={classId} onValueChange={setClassId}>
-            <SelectTrigger className="w-[160px] rounded-xl">
+            <SelectTrigger className="w-[160px] rounded-none">
               <SelectValue placeholder="Pilih kelas" />
             </SelectTrigger>
             <SelectContent>
@@ -214,7 +214,7 @@ export function StudentsPanel({
               value={query}
               onChange={(e) => setQuery(e.target.value)}
               placeholder="Cari nama/NISN..."
-              className="w-56 rounded-xl pl-9"
+              className="w-56 rounded-none pl-9"
             />
           </div>
         </div>
@@ -224,7 +224,7 @@ export function StudentsPanel({
           Menampilkan hasil pencarian dari semua kelas.
         </p>
       )}
-      <div className="overflow-x-auto rounded-2xl border">
+      <div className="overflow-x-auto rounded-2none border">
         <table className="w-full text-sm">
           <thead className="bg-muted/50 text-left text-xs uppercase tracking-wider text-muted-foreground">
             <tr>

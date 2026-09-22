@@ -18,7 +18,7 @@ export function PageHeader({
     <Card
       className={cn(
         "flex flex-wrap items-center justify-between gap-4 border-0 gradient-soft p-6 shadow-soft md:p-8",
-        rounded === "blunt" ? "rounded-md" : "rounded-3xl",
+        rounded === "blunt" ? "rounded-md" : "rounded-none",
       )}
     >
       <div className="flex items-center gap-4">
@@ -26,7 +26,7 @@ export function PageHeader({
           <div
             className={cn(
               "grid h-14 w-14 place-items-center bg-card text-3xl shadow-soft",
-              rounded === "blunt" ? "rounded-md" : "rounded-2xl",
+              rounded === "blunt" ? "rounded-md" : "rounded-md",
             )}
           >
             {icon}

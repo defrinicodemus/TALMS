@@ -10,7 +10,7 @@ type Data = Awaited<ReturnType<typeof getAdminDashboardData>>;
 export function AdminDashboard({ data }: { data: Data }) {
   return (
     <div className="space-y-6">
-      <Card className="relative overflow-hidden border-0 gradient-primary p-8 text-primary-foreground shadow-glow">
+      <Card className="rounded-none relative overflow-hidden border-0 gradient-primary p-8 text-primary-foreground shadow-glow">
         <h1 className="font-display text-3xl font-bold md:text-4xl">Panel Administrasi 🛠️</h1>
         <p className="mt-2 max-w-lg text-sm opacity-90">
           Kelola pengguna, struktur akademik, dan pengaturan sistem LMS.
@@ -24,7 +24,7 @@ export function AdminDashboard({ data }: { data: Data }) {
         <Stat icon={Users} label="Total Pengguna" value={String(data.totalUsers)} />
       </div>
 
-      <Card className="rounded-3xl border-0 p-6 shadow-soft">
+      <Card className="rounded-none border-0 p-6 shadow-soft">
         <h2 className="font-display text-xl font-bold">Siswa per Kelas</h2>
         <div className="mt-1 text-xs text-muted-foreground">
           Distribusi jumlah siswa di setiap rombel
@@ -49,7 +49,7 @@ export function AdminDashboard({ data }: { data: Data }) {
 
 function Stat({ icon: Icon, label, value }: { icon: typeof Users; label: string; value: string }) {
   return (
-    <Card className="rounded-3xl border-0 p-5 shadow-soft">
+    <Card className="rounded-none border-0 p-5 shadow-soft">
       <div className="flex items-center justify-between">
         <div>
           <div className="text-xs uppercase tracking-wider text-muted-foreground">{label}</div>
