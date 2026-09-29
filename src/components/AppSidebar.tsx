@@ -67,7 +67,7 @@ export const NAV: Record<Role, { title: string; url: string; icon: LucideIcon }[
   ],
   admin: [
     { title: "Beranda", url: "/dashboard", icon: LayoutDashboard },
-    { title: "Manajemen User", url: "/users", icon: Users },
+    { title: "Manajemen Pengguna", url: "/users", icon: Users },
     { title: "Struktur Akademik", url: "/academic", icon: Building2 },
     { title: "Master Kelas", url: "/master-kelas", icon: Layers },
     { title: "Pengumuman", url: "/announcements", icon: Bell },

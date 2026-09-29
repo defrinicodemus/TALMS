@@ -40,7 +40,7 @@ export function SchoolSettingsForm({
         <Label>No. Telepon</Label>
         <Input name="phone" className="mt-1" defaultValue={phone} />
       </div>
-      <Button type="submit" className="rounded-xl" disabled={isPending}>
+      <Button type="submit" className="rounded-none" disabled={isPending}>
         {isPending ? "Menyimpan..." : "Simpan Perubahan"}
       </Button>
     </form>

@@ -22,7 +22,7 @@ export default async function SettingsPage() {
         subtitle="Profil sekolah, reset password, dan backup"
       />
       <div className="grid gap-6 lg:grid-cols-2">
-        <Card className="rounded-3xl border-0 p-6 shadow-soft">
+        <Card className="rounded-none border-0 p-6 shadow-soft">
           <div className="flex items-center gap-2">
             <School className="h-5 w-5 text-primary" />
             <h2 className="font-display text-xl font-bold">Profil Sekolah</h2>
@@ -38,7 +38,7 @@ export default async function SettingsPage() {
         </Card>
 
         <div className="space-y-6">
-          <Card className="rounded-3xl border-0 p-6 shadow-soft">
+          <Card className="rounded-none border-0 p-6 shadow-soft">
             <div className="flex items-center gap-2">
               <KeyRound className="h-5 w-5 text-primary" />
               <h2 className="font-display text-xl font-bold">Reset Password</h2>
@@ -49,15 +49,15 @@ export default async function SettingsPage() {
             <ResetPasswordPanel users={users} />
           </Card>
 
-          <Card className="rounded-3xl border-0 p-6 shadow-soft">
+          <Card className="rounded-none border-0 p-6 shadow-soft">
             <div className="flex items-center gap-2">
               <Database className="h-5 w-5 text-primary" />
-              <h2 className="font-display text-xl font-bold">Backup Database</h2>
+              <h2 className="font-display text-xl font-bold">Backup Data Sistem</h2>
             </div>
             <p className="mt-2 text-sm text-muted-foreground">
               Cadangkan seluruh data sistem dalam satu klik.
             </p>
-            <Button className="mt-4 rounded-xl">Unduh Backup (.zip)</Button>
+            <Button className="mt-4 rounded-none">Unduh Backup (.zip)</Button>
           </Card>
         </div>
       </div>

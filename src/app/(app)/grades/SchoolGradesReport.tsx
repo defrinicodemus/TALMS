@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
+import { PageHeader } from "@/components/PageHeader";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import {
@@ -27,15 +28,11 @@ export function SchoolGradesReport({ data }: { data: SchoolReportData | null }) 
   if (!data) {
     return (
       <div className="space-y-6">
-        <Card className="rounded-3xl border-0 bg-muted/40 p-8 shadow-soft">
-          <h1 className="font-display text-3xl font-bold text-primary md:text-4xl">
-            Laporan Sekolah
-          </h1>
-          <p className="mt-3 max-w-2xl text-sm text-muted-foreground">
-            Belum ada tahun ajaran yang terdaftar. Hubungi admin untuk menambahkan tahun ajaran pada
-            menu Struktur Akademik.
-          </p>
-        </Card>
+        <PageHeader
+          icon="📊"
+          title="Laporan Sekolah"
+          subtitle="Belum ada tahun ajaran yang terdaftar. Hubungi admin untuk menambahkan tahun ajaran pada menu Struktur Akademik."
+        />
       </div>
     );
   }
@@ -46,15 +43,11 @@ export function SchoolGradesReport({ data }: { data: SchoolReportData | null }) 
 
   return (
     <div className="space-y-6">
-      <Card className="rounded-3xl border-0 bg-muted/40 p-8 shadow-soft">
-        <h1 className="font-display text-3xl font-bold text-primary md:text-4xl">
-          Laporan Sekolah
-        </h1>
-        <p className="mt-3 max-w-2xl text-sm text-muted-foreground">
-          Lihat rekap aktivitas LMS, kinerja pembelajaran, dan statistik penggunaan sistem sebagai
-          bahan evaluasi dan pelaporan sekolah.
-        </p>
-      </Card>
+      <PageHeader
+        icon="📊"
+        title="Laporan Sekolah"
+        subtitle="Rekap aktivitas LMS, kinerja pembelajaran, dan statistik untuk evaluasi sekolah."
+      />
 
       <Card className="rounded-3xl border-0 p-6 shadow-soft">
         <div className="flex flex-wrap items-end gap-4">

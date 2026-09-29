@@ -58,7 +58,7 @@ export function ResetPasswordPanel({ users }: { users: UserRow[] }) {
           {results.map((u) => (
             <div
               key={u.id}
-              className="flex items-center justify-between gap-3 rounded-xl border px-3 py-2"
+              className="flex items-center justify-between gap-3 rounded-none border px-3 py-2"
             >
               <div>
                 <div className="text-sm font-medium">{u.name}</div>
@@ -71,7 +71,7 @@ export function ResetPasswordPanel({ users }: { users: UserRow[] }) {
                   <Button
                     size="sm"
                     variant="outline"
-                    className="rounded-lg"
+                    className="rounded-none"
                     disabled={isPending && resettingId === u.id}
                   >
                     {isPending && resettingId === u.id ? "Mereset..." : "Reset"}

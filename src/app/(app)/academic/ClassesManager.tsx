@@ -36,11 +36,18 @@ import { createClass, updateClass, deleteClass } from "../actions";
 type ClassRow = { id: string; name: string; grade_level: number };
 type YearRow = { id: string; year_label: string; semester: string; is_active: boolean };
 
-export function ClassesManager({ classes, years }: { classes: ClassRow[]; years: YearRow[] }) {
+export function ClassesManager({
+  classes,
+  years,
+  activeYear,
+}: {
+  classes: ClassRow[];
+  years: YearRow[];
+  activeYear: YearRow | null;
+}) {
   const [open, setOpen] = useState(false);
   const [editing, setEditing] = useState<ClassRow | null>(null);
   const [isPending, startTransition] = useTransition();
-  const activeYear = years.find((y) => y.is_active) ?? years[0];
 
   function handleSubmit(formData: FormData) {
     startTransition(async () => {
@@ -69,9 +76,16 @@ export function ClassesManager({ classes, years }: { classes: ClassRow[]; years:
   }
 
   return (
-    <Card className="rounded-3xl border-0 p-6 shadow-soft">
+    <Card className="rounded-none border-0 p-6 shadow-soft">
       <div className="flex items-center justify-between">
-        <h2 className="font-display text-xl font-bold">Kelas</h2>
+        <div>
+          <h2 className="font-display text-xl font-bold">
+            Kelas {activeYear ? `TA ${activeYear.year_label}` : ""}
+          </h2>
+          <p className="mt-1 text-xs text-muted-foreground">
+            Daftar kelas pada tahun ajaran aktif.
+          </p>
+        </div>
         <Dialog
           open={open}
           onOpenChange={(v) => {
@@ -80,7 +94,7 @@ export function ClassesManager({ classes, years }: { classes: ClassRow[]; years:
           }}
         >
           <DialogTrigger asChild>
-            <Button size="sm" className="rounded-lg" onClick={() => setEditing(null)}>
+            <Button size="sm" className="rounded-none" onClick={() => setEditing(null)}>
               + Tambah Kelas
             </Button>
           </DialogTrigger>
@@ -124,7 +138,7 @@ export function ClassesManager({ classes, years }: { classes: ClassRow[]; years:
                 </div>
               )}
               <div className="flex gap-2">
-                <Button type="submit" className="flex-1 rounded-xl" disabled={isPending}>
+                <Button type="submit" className="flex-1 rounded-none" disabled={isPending}>
                   {isPending ? "Menyimpan..." : "Simpan"}
                 </Button>
                 {editing && (
@@ -133,7 +147,7 @@ export function ClassesManager({ classes, years }: { classes: ClassRow[]; years:
                       <Button
                         type="button"
                         variant="destructive"
-                        className="rounded-xl"
+                        className="rounded-none"
                         disabled={isPending}
                       >
                         Hapus
@@ -168,12 +182,14 @@ export function ClassesManager({ classes, years }: { classes: ClassRow[]; years:
               setEditing(c);
               setOpen(true);
             }}
-            className="rounded-2xl bg-primary-soft/30 px-4 py-3 text-left text-sm font-semibold hover:bg-primary-soft/50"
+            className="rounded-none bg-primary-soft/30 px-4 py-3 text-left text-sm font-semibold hover:bg-primary-soft/50"
           >
             {c.name}
           </button>
         ))}
-        {classes.length === 0 && <p className="text-sm text-muted-foreground">Belum ada kelas.</p>}
+        {classes.length === 0 && (
+          <p className="text-sm text-muted-foreground">Belum ada kelas pada tahun ajaran aktif.</p>
+        )}
       </div>
     </Card>
   );

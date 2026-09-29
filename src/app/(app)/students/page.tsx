@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { PageHeader } from "@/components/PageHeader";
 import { Card } from "@/components/ui/card";
 import { requireRole } from "@/lib/auth/guard";
 import { getMonitoringPembelajaranData, type MonitoringClassRow } from "@/lib/data/monitoring";
@@ -17,33 +18,27 @@ export default async function StudentsPage() {
   if (!data) {
     return (
       <div className="space-y-6">
-        <Card className="rounded-3xl border-0 bg-muted/40 p-8 shadow-soft">
-          <h1 className="font-display text-3xl font-bold text-primary md:text-4xl">
-            Monitoring Pembelajaran
-          </h1>
-          <p className="mt-3 max-w-2xl text-sm text-muted-foreground">
-            Belum ada tahun ajaran aktif. Hubungi admin untuk mengaktifkan tahun ajaran pada menu
-            Struktur Akademik.
-          </p>
-        </Card>
+        <PageHeader
+          icon="🎓"
+          title="Monitoring Pembelajaran"
+          subtitle="Belum ada tahun ajaran aktif. Hubungi admin untuk mengaktifkan tahun ajaran pada menu Struktur Akademik."
+        />
       </div>
     );
   }
 
   return (
     <div className="space-y-6">
-      <Card className="rounded-3xl border-0 bg-muted/40 p-8 shadow-soft">
-        <span className="inline-flex items-center rounded-full bg-emerald-100 px-3 py-1 text-xs font-bold uppercase tracking-wider text-emerald-700">
-          {SEMESTER_LABEL[data.semester]} {data.academicYearLabel}
-        </span>
-        <h1 className="mt-4 font-display text-3xl font-bold text-primary md:text-4xl">
-          Monitoring Pembelajaran
-        </h1>
-        <p className="mt-3 max-w-2xl text-sm text-muted-foreground">
-          Pantau aktivitas belajar siswa, tingkat partisipasi kelas, serta perkembangan pelaksanaan
-          pembelajaran pada seluruh kelas secara real-time.
-        </p>
-      </Card>
+      <PageHeader
+        icon="🎓"
+        title="Monitoring Pembelajaran"
+        subtitle="Pantau aktivitas belajar, kehadiran, serta penyelesaian tugas dan kuis setiap kelas."
+        // action={
+        //   <span className="inline-flex items-center rounded-full bg-emerald-100 px-3 py-1 text-xs font-bold uppercase tracking-wider text-emerald-700">
+        //     {SEMESTER_LABEL[data.semester]} {data.academicYearLabel}
+        //   </span>
+        // }
+      />
 
       <div className="grid gap-4 md:grid-cols-4">
         <Stat

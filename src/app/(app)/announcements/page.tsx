@@ -51,11 +51,11 @@ export default async function AnnouncementsPage({
         icon="📣"
         title="Pengumuman"
         subtitle={isAdmin ? "Buat dan kelola pengumuman sekolah" : "Daftar pengumuman sekolah"}
-        rounded="blunt"
+
       />
       <div className="grid gap-6 lg:grid-cols-3">
         {isAdmin && (
-          <Card className="@container rounded-md border-0 p-4 shadow-soft @sm:p-6 lg:col-span-1">
+          <Card className="@container rounded-none border-0 p-4 shadow-soft @sm:p-6 lg:col-span-1">
             <h2 className="font-display text-base font-bold @sm:text-lg @md:text-xl">
               Buat Pengumuman
             </h2>
@@ -64,9 +64,9 @@ export default async function AnnouncementsPage({
         )}
         <div className={isAdmin ? "space-y-3 lg:col-span-2" : "space-y-3 lg:col-span-3"}>
           {items.map((a) => (
-            <Card key={a.id} className="@container rounded-md border-0 p-4 shadow-soft @sm:p-6">
+            <Card key={a.id} className="@container rounded-none border-0 p-4 shadow-soft @sm:p-6">
               <span
-                className={`inline-flex w-fit rounded-md px-2.5 py-0.5 text-[10px] font-semibold @sm:text-xs ${getCategoryBadgeClass(a.category)}`}
+                className={`inline-flex w-fit rounded-none px-2.5 py-0.5 text-[10px] font-semibold @sm:text-xs ${getCategoryBadgeClass(a.category)}`}
               >
                 {a.category}
               </span>
@@ -139,7 +139,7 @@ function PagChevron({
 }) {
   const Icon = direction === "prev" ? ChevronLeft : ChevronRight;
   const label = direction === "prev" ? "Halaman sebelumnya" : "Halaman selanjutnya";
-  const base = "grid size-8 place-items-center rounded-md transition-colors @sm:size-9";
+  const base = "grid size-8 place-items-center rounded-none transition-colors @sm:size-9";
 
   if (disabled) {
     return (

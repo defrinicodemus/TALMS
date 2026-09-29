@@ -656,9 +656,21 @@ export async function getTeacherDashboardData(
 
 export async function getAdminDashboardData() {
   const supabase = await createClient();
+  const { data: activeYear } = await supabase
+    .from("academic_years")
+    .select("id, year_label")
+    .eq("is_active", true)
+    .maybeSingle();
+
   const [{ data: profiles }, { data: classRows }, { data: studentClassRows }] = await Promise.all([
     supabase.from("profiles").select("role"),
-    supabase.from("classes").select("id, name, grade_level").order("grade_level"),
+    activeYear
+      ? supabase
+          .from("classes")
+          .select("id, name, grade_level")
+          .eq("academic_year_id", activeYear.id)
+          .order("grade_level")
+      : Promise.resolve({ data: [] as { id: string; name: string; grade_level: number }[] }),
     supabase.from("profiles").select("class_id").eq("role", "student"),
   ]);
   const counts = { student: 0, teacher: 0, principal: 0, admin: 0 };
@@ -678,6 +690,7 @@ export async function getAdminDashboardData() {
     totalTeachers: counts.teacher,
     totalPrincipals: counts.principal,
     totalUsers: counts.student + counts.teacher + counts.principal + counts.admin,
+    activeAcademicYearLabel: activeYear?.year_label ?? null,
     studentsPerClass,
   };
 }

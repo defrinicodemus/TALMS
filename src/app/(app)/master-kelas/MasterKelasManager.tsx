@@ -136,11 +136,11 @@ export function MasterKelasManager({
 
   return (
     <div className="space-y-6">
-      <Card className="rounded-3xl border-0 p-6 shadow-soft">
+      <Card className="rounded-none border-0 p-6 shadow-soft">
         <div className="flex items-center gap-3">
           <span className="text-sm font-medium text-muted-foreground">Kelas:</span>
           <Select value={classId} onValueChange={setClassId}>
-            <SelectTrigger className="w-[200px] rounded-xl">
+            <SelectTrigger className="w-[200px] rounded-none">
               <SelectValue placeholder="Pilih kelas" />
             </SelectTrigger>
             <SelectContent>
@@ -160,7 +160,7 @@ export function MasterKelasManager({
         </p>
       ) : (
         <div className="grid gap-6 lg:grid-cols-2">
-          <Card className="rounded-3xl border-0 p-6 shadow-soft">
+          <Card className="rounded-none border-0 p-6 shadow-soft">
             <h2 className="font-display text-xl font-bold">Guru & Mata Pelajaran</h2>
             <div className="mt-1 text-xs text-muted-foreground">{selectedClassName}</div>
             <div className="mt-4 space-y-2">
@@ -169,7 +169,7 @@ export function MasterKelasManager({
                 return (
                   <div
                     key={s.id}
-                    className="flex items-center justify-between gap-3 rounded-xl border px-3 py-2"
+                    className="flex items-center justify-between gap-3 rounded-none border px-3 py-2"
                   >
                     <div className="flex items-center gap-2 text-sm font-medium">
                       <span className="text-lg">{s.emoji}</span>
@@ -180,7 +180,7 @@ export function MasterKelasManager({
                       onValueChange={(v) => handleTeacherChange(s.id, v)}
                       disabled={isPending}
                     >
-                      <SelectTrigger className="w-[180px] rounded-lg">
+                      <SelectTrigger className="w-[180px] rounded-none">
                         <SelectValue placeholder="Belum ditugaskan" />
                       </SelectTrigger>
                       <SelectContent>
@@ -203,7 +203,7 @@ export function MasterKelasManager({
             </div>
           </Card>
 
-          <Card className="rounded-3xl border-0 p-6 shadow-soft">
+          <Card className="rounded-none border-0 p-6 shadow-soft">
             <div className="flex items-center justify-between">
               <div>
                 <h2 className="font-display text-xl font-bold">Siswa</h2>
@@ -211,7 +211,7 @@ export function MasterKelasManager({
               </div>
               <Popover open={pickerOpen} onOpenChange={setPickerOpen}>
                 <PopoverTrigger asChild>
-                  <Button size="sm" className="rounded-lg" disabled={isPending}>
+                  <Button size="sm" className="rounded-none" disabled={isPending}>
                     + Tambah Siswa
                   </Button>
                 </PopoverTrigger>
@@ -243,7 +243,7 @@ export function MasterKelasManager({
               {studentsInClass.map((s) => (
                 <div
                   key={s.id}
-                  className="flex items-center justify-between gap-3 rounded-xl border px-3 py-2"
+                  className="flex items-center justify-between gap-3 rounded-none border px-3 py-2"
                 >
                   <div className="text-sm font-medium">
                     {s.name}
@@ -251,7 +251,7 @@ export function MasterKelasManager({
                   </div>
                   <AlertDialog>
                     <AlertDialogTrigger asChild>
-                      <Button size="sm" variant="ghost" className="rounded-lg" disabled={isPending}>
+                      <Button size="sm" variant="ghost" className="rounded-none" disabled={isPending}>
                         <UserMinus className="h-4 w-4" />
                       </Button>
                     </AlertDialogTrigger>

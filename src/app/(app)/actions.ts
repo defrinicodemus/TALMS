@@ -523,7 +523,7 @@ export async function assignStudentToClass(
 }
 
 export async function promoteClasses(
-  mappings: { sourceClassId: string; targetClassId: string }[],
+  mappings: { sourceClassId: string; targetClassId: string; studentIds: string[] }[],
 ): Promise<{ ok: boolean; message: string }> {
   if (mappings.length === 0) {
     return { ok: false, message: "Pilih minimal satu pemetaan kelas." };
@@ -538,13 +538,20 @@ export async function promoteClasses(
   let studentsMoved = 0;
   let assignmentsCopied = 0;
 
-  for (const { sourceClassId, targetClassId } of mappings) {
-    const { data: movedStudents } = await supabase
-      .from("profiles")
-      .update({ class_id: targetClassId })
-      .eq("class_id", sourceClassId)
-      .select("id");
-    studentsMoved += movedStudents?.length ?? 0;
+  for (const { sourceClassId, targetClassId, studentIds } of mappings) {
+    const uniqueStudentIds = [...new Set(studentIds)].filter(Boolean);
+    if (uniqueStudentIds.length > 0) {
+      const { data: movedStudents, error: moveError } = await supabase
+        .from("profiles")
+        .update({ class_id: targetClassId })
+        .eq("role", "student")
+        .eq("class_id", sourceClassId)
+        .in("id", uniqueStudentIds)
+        .select("id");
+
+      if (moveError) return { ok: false, message: moveError.message };
+      studentsMoved += movedStudents?.length ?? 0;
+    }
 
     const { data: assignments } = await supabase
       .from("class_teacher_subjects")

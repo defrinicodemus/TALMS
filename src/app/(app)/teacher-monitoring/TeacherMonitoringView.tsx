@@ -2,6 +2,7 @@
 
 import { useMemo, useState } from "react";
 import Link from "next/link";
+import { PageHeader } from "@/components/PageHeader";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
@@ -149,13 +150,11 @@ export function TeacherMonitoringView({ data }: { data: TeacherMonitoringData })
 
   return (
     <div className="space-y-6">
-      <Card className="relative overflow-hidden border-0 gradient-primary p-8 text-primary-foreground shadow-glow">
-        <h1 className="font-display text-3xl font-bold md:text-4xl">Kinerja Guru</h1>
-        <p className="mt-2 max-w-2xl text-sm opacity-90">
-          Pantau aktivitas guru dalam mengelola pembelajaran, membuat materi, tugas, kuis, serta
-          mengisi presensi dan administrasi pembelajaran.
-        </p>
-      </Card>
+      <PageHeader
+        icon="👩‍🏫"
+        title="Kinerja Guru"
+        subtitle="Pantau aktivitas guru, materi, tugas, kuis, dan presensi pembelajaran."
+      />
 
       <div className="grid gap-4 md:grid-cols-4">
         <Stat

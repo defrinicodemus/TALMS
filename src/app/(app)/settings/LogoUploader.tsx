@@ -77,7 +77,7 @@ export function LogoUploader({ logoUrl }: { logoUrl: string | null }) {
         <Button
           type="button"
           variant="outline"
-          className="rounded-xl"
+          className="rounded-none"
           disabled={isPending}
           onClick={() => inputRef.current?.click()}
         >

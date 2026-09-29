@@ -56,6 +56,7 @@ declare
   new_id uuid;
   v_school_id uuid;
   v_class_id uuid;
+  initial_profile jsonb;
 begin
   select id into v_school_id from public.schools limit 1;
 
@@ -66,6 +67,17 @@ begin
     if u ? 'class_name' then
       select id into v_class_id from public.classes where name = u->>'class_name';
     end if;
+
+    initial_profile := jsonb_build_object(
+      'school_id', v_school_id::text,
+      'role', u->>'role',
+      'full_name', u->>'full_name',
+      'username', u->>'username',
+      'avatar_emoji', u->>'avatar_emoji',
+      'nisn', u->>'nisn',
+      'nip', u->>'nip',
+      'class_id', v_class_id::text
+    );
 
     insert into auth.users (
       instance_id, id, aud, role, email, encrypted_password,
@@ -80,17 +92,9 @@ begin
       u->>'email',
       crypt(u->>'password', gen_salt('bf')),
       now(), now(), now(),
-      '{"provider":"email","providers":["email"]}',
-      jsonb_build_object(
-        'school_id', v_school_id::text,
-        'role', u->>'role',
-        'full_name', u->>'full_name',
-        'username', u->>'username',
-        'avatar_emoji', u->>'avatar_emoji',
-        'nisn', u->>'nisn',
-        'nip', u->>'nip',
-        'class_id', v_class_id::text
-      ),
+      jsonb_build_object('provider', 'email', 'providers', jsonb_build_array('email'),
+                         'lms_profile', initial_profile),
+      initial_profile,
       now(), now(),
       '', '', '', ''
     );

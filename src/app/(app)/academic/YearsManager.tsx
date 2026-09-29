@@ -74,12 +74,12 @@ export function YearsManager({ years }: { years: YearRow[] }) {
   }
 
   return (
-    <Card className="rounded-3xl border-0 p-6 shadow-soft">
+    <Card className="rounded-none border-0 p-6 shadow-soft">
       <div className="flex items-center justify-between">
         <h2 className="font-display text-xl font-bold">Tahun Ajaran</h2>
         <Dialog open={open} onOpenChange={setOpen}>
           <DialogTrigger asChild>
-            <Button size="sm" className="rounded-lg">
+            <Button size="sm" className="rounded-none">
               + Tambah Tahun Ajaran
             </Button>
           </DialogTrigger>
@@ -104,7 +104,7 @@ export function YearsManager({ years }: { years: YearRow[] }) {
                   </SelectContent>
                 </Select>
               </div>
-              <Button type="submit" className="w-full rounded-xl" disabled={isPending}>
+              <Button type="submit" className="w-full rounded-none" disabled={isPending}>
                 {isPending ? "Menyimpan..." : "Simpan"}
               </Button>
             </form>
@@ -115,7 +115,7 @@ export function YearsManager({ years }: { years: YearRow[] }) {
         {years.map((y) => (
           <Card
             key={y.id}
-            className={`relative rounded-2xl border-0 p-4 shadow-soft ${y.is_active ? "bg-primary text-primary-foreground" : "bg-card"}`}
+            className={`relative rounded-none border-0 p-4 shadow-soft ${y.is_active ? "bg-primary text-primary-foreground" : "bg-card"}`}
           >
             {!y.is_active && (
               <AlertDialog>
@@ -148,14 +148,14 @@ export function YearsManager({ years }: { years: YearRow[] }) {
             <div className="font-display text-xl font-bold">{y.year_label}</div>
             <div className="mt-1 text-sm capitalize opacity-90">Semester {y.semester}</div>
             {y.is_active ? (
-              <div className="mt-2 inline-flex rounded-full bg-white/20 px-2 py-0.5 text-xs">
+              <div className="mt-2 inline-flex rounded-none bg-white/20 px-2 py-0.5 text-xs">
                 Aktif
               </div>
             ) : (
               <Button
                 size="sm"
                 variant="outline"
-                className="mt-2 rounded-lg"
+                className="mt-2 rounded-none"
                 disabled={isPending}
                 onClick={() => handleActivate(y.id)}
               >

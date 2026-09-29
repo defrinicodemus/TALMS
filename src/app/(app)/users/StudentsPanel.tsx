@@ -192,9 +192,9 @@ export function StudentsPanel({
             </form>
           </DialogContent>
         </Dialog>
-        <Button variant="outline" className="rounded-none">
+        {/* <Button variant="outline" className="rounded-none">
           <Upload className="mr-2 h-4 w-4" /> Import Excel
-        </Button>
+        </Button> */}
         <div className="ml-auto flex flex-wrap items-center gap-2">
           <Select value={classId} onValueChange={setClassId}>
             <SelectTrigger className="w-[160px] rounded-none">

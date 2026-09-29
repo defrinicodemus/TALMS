@@ -115,7 +115,7 @@ export function SubjectsManager({ subjects }: { subjects: SubjectRow[] }) {
   }
 
   return (
-    <Card className="rounded-3xl border-0 p-6 shadow-soft">
+    <Card className="rounded-none border-0 p-6 shadow-soft">
       <div className="flex items-center justify-between">
         <h2 className="font-display text-xl font-bold">Mata Pelajaran</h2>
         <Dialog
@@ -126,7 +126,7 @@ export function SubjectsManager({ subjects }: { subjects: SubjectRow[] }) {
           }}
         >
           <DialogTrigger asChild>
-            <Button size="sm" className="rounded-lg" onClick={openAdd}>
+            <Button size="sm" className="rounded-none" onClick={openAdd}>
               + Tambah Mapel
             </Button>
           </DialogTrigger>
@@ -176,14 +176,14 @@ export function SubjectsManager({ subjects }: { subjects: SubjectRow[] }) {
               </div>
               <div>
                 <Label>Emoji</Label>
-                <div className="mt-1 grid grid-cols-6 gap-1 rounded-xl border p-2">
+                <div className="mt-1 grid grid-cols-6 gap-1 rounded-none border p-2">
                   {EMOJI_OPTIONS.map((option) => (
                     <button
                       key={option}
                       type="button"
                       onClick={() => setEmoji(option)}
                       className={cn(
-                        "rounded-lg py-1.5 text-xl hover:bg-muted",
+                        "rounded-none py-1.5 text-xl hover:bg-muted",
                         emoji === option && "bg-primary-soft/50 ring-2 ring-primary",
                       )}
                       aria-label={`Pilih emoji ${option}`}
@@ -194,7 +194,7 @@ export function SubjectsManager({ subjects }: { subjects: SubjectRow[] }) {
                 </div>
               </div>
               <div className="flex gap-2">
-                <Button type="submit" className="flex-1 rounded-xl" disabled={isPending}>
+                <Button type="submit" className="flex-1 rounded-none" disabled={isPending}>
                   {isPending ? "Menyimpan..." : "Simpan"}
                 </Button>
                 {editing && (
@@ -203,7 +203,7 @@ export function SubjectsManager({ subjects }: { subjects: SubjectRow[] }) {
                       <Button
                         type="button"
                         variant="destructive"
-                        className="rounded-xl"
+                        className="rounded-none"
                         disabled={isPending}
                       >
                         Hapus
@@ -236,12 +236,12 @@ export function SubjectsManager({ subjects }: { subjects: SubjectRow[] }) {
             <button
               key={s.id}
               onClick={() => openEdit(s)}
-              className="flex items-center gap-2 rounded-2xl border px-3 py-2 text-left text-sm font-medium hover:bg-muted/50"
+              className="flex items-center gap-2 rounded-none border px-3 py-2 text-left text-sm font-medium hover:bg-muted/50"
             >
               <span className="text-lg">{s.emoji}</span>
               <span className="flex-1">{s.name}</span>
               {rangeLabel && (
-                <span className="rounded-full bg-muted px-2 py-0.5 text-xs font-normal text-muted-foreground">
+                <span className="rounded-none bg-muted px-2 py-0.5 text-xs font-normal text-muted-foreground">
                   {rangeLabel}
                 </span>
               )}

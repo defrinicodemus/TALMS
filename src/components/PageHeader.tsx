@@ -18,7 +18,7 @@ export function PageHeader({
     <Card
       className={cn(
         "flex flex-wrap items-center justify-between gap-4 border-0 gradient-soft p-6 shadow-soft md:p-8",
-        rounded === "blunt" ? "rounded-md" : "rounded-none",
+        rounded === "blunt" ? "rounded-md" : "rounded-3xl",
       )}
     >
       <div className="flex items-center gap-4">

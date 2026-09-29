@@ -8,6 +8,7 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint .",
+    "test:security": "node --test tests/security/*.test.mjs",
     "format": "prettier --write ."
   },
   "dependencies": {
@@ -72,6 +73,7 @@
     "zod": "^3.24.2"
   },
   "devDependencies": {
+    "@electric-sql/pglite": "0.5.8",
     "@eslint/js": "^9.32.0",
     "@tailwindcss/postcss": "^4.2.1",
     "@types/node": "^22.16.5",

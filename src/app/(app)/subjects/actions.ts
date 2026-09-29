@@ -1,7 +1,9 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
+import { z } from "zod";
 import { createClient } from "@/lib/supabase/server";
+import { createAdminClient } from "@/lib/supabase/admin";
 import { getCurrentUser } from "@/lib/data/profile";
 import { assertRole } from "@/lib/auth/guard";
 import { getQuizForStudent, type StudentQuizData } from "@/lib/data/subjects";
@@ -73,13 +75,15 @@ export async function fetchQuizForStudent(assignmentId: string): Promise<Student
   return getQuizForStudent(assignmentId, currentUser.id);
 }
 
-interface QuizAnswerInput {
-  questionId: string;
-  selectedOptionId?: string;
-  trueFalseAnswer?: "benar" | "salah";
-  dragDropAnswer?: Record<string, string>;
-  sequenceAnswer?: string[];
-}
+const quizAnswerSchema = z.object({
+  questionId: z.string().uuid(),
+  selectedOptionId: z.string().uuid().optional(),
+  trueFalseAnswer: z.enum(["benar", "salah"]).optional(),
+  dragDropAnswer: z.record(z.string().uuid(), z.string().uuid()).optional(),
+  sequenceAnswer: z.array(z.string().uuid()).optional(),
+});
+
+type QuizAnswerInput = z.infer<typeof quizAnswerSchema>;
 
 export async function submitQuizAnswers(
   assignmentId: string,
@@ -89,6 +93,12 @@ export async function submitQuizAnswers(
   const roleError = assertRole(currentUser, ["student"]);
   if (roleError) return roleError;
   if (!currentUser) return { ok: false, message: "Tidak diizinkan." };
+
+  const parsedAnswers = z.array(quizAnswerSchema).safeParse(answers);
+  if (!z.string().uuid().safeParse(assignmentId).success || !parsedAnswers.success) {
+    return { ok: false, message: "Format jawaban kuis tidak valid." };
+  }
+  answers = parsedAnswers.data;
 
   const supabase = await createClient();
 
@@ -102,7 +112,7 @@ export async function submitQuizAnswers(
     return { ok: false, message: "Kuis ini sudah pernah kamu kerjakan." };
   }
 
-  const { data: questions } = await supabase
+  const { data: questions, error: questionsError } = await supabase
     .from("quiz_questions")
     .select(
       "id, question_type, points, correct_answer_text, quiz_options(id, is_correct), quiz_pairs(id), quiz_steps(id, correct_order)",
@@ -110,7 +120,7 @@ export async function submitQuizAnswers(
     .eq("assignment_id", assignmentId)
     .eq("is_active", true);
 
-  if (!questions || questions.length === 0) {
+  if (questionsError || !questions || questions.length === 0) {
     return { ok: false, message: "Soal tidak ditemukan." };
   }
 
@@ -151,34 +161,11 @@ export async function submitQuizAnswers(
     perQuestionPoints.set(q.id, questionPoints);
     score += questionPoints;
   }
-  const now = new Date().toISOString();
-
-  const { data: submission, error } = await supabase
-    .from("submissions")
-    .upsert(
-      {
-        assignment_id: assignmentId,
-        student_id: currentUser.id,
-        status: "graded",
-        score,
-        submitted_at: now,
-        graded_at: now,
-      },
-      { onConflict: "assignment_id,student_id" },
-    )
-    .select("id")
-    .single();
-
-  if (error || !submission) {
-    return { ok: false, message: error?.message ?? "Gagal menyimpan submission." };
-  }
-
   const answerRows = questions
     .map((q) => {
       const ans = answers.find((a) => a.questionId === q.id);
       if (!ans) return null;
       return {
-        submission_id: submission.id,
         question_id: q.id,
         selected_option_id: ans.selectedOptionId ?? null,
         true_false_answer: ans.trueFalseAnswer ?? null,
@@ -189,10 +176,18 @@ export async function submitQuizAnswers(
     })
     .filter((r): r is NonNullable<typeof r> => r !== null);
 
-  if (answerRows.length > 0) {
-    await supabase
-      .from("quiz_answers")
-      .upsert(answerRows, { onConflict: "submission_id,question_id" });
+  // This server action computes all points; the browser supplies only answers.
+  // The RPC is service-role-only and rechecks eligibility before saving both
+  // the submission and answer rows in one transaction.
+  const admin = createAdminClient();
+  const { error } = await admin.rpc("save_scored_quiz", {
+    p_assignment_id: assignmentId,
+    p_student_id: currentUser.id,
+    p_score: score,
+    p_answers: answerRows,
+  });
+  if (error) {
+    return { ok: false, message: error.message };
   }
 
   revalidatePath("/subjects");

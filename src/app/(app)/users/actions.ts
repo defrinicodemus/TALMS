@@ -30,19 +30,22 @@ export async function createStudent(formData: FormData): Promise<Result> {
   const { data: school } = await supabase.from("schools").select("id").limit(1).single();
   if (!school) return { ok: false, message: "Data sekolah tidak ditemukan." };
 
+  const initialProfile = {
+    role: "student",
+    full_name: name,
+    username: nisn,
+    nisn,
+    class_id: classId || null,
+    school_id: school.id,
+  };
   const admin = createAdminClient();
   const { error } = await admin.auth.admin.createUser({
     email: `${nisn}@${EMAIL_DOMAIN}`,
     password: nisn,
     email_confirm: true,
-    user_metadata: {
-      role: "student",
-      full_name: name,
-      username: nisn,
-      nisn,
-      class_id: classId || null,
-      school_id: school.id,
-    },
+    app_metadata: { lms_profile: initialProfile },
+    // Keep the legacy payload during rollout; the hardened trigger trusts only app_metadata.
+    user_metadata: initialProfile,
   });
   if (error) return { ok: false, message: friendlyAuthError(error.message, "NISN") };
 
@@ -117,12 +120,15 @@ async function createStaffAccount(
   const { data: school } = await supabase.from("schools").select("id").limit(1).single();
   if (!school) return { ok: false, message: "Data sekolah tidak ditemukan." };
 
+  const initialProfile = { role, full_name: name, username: nip, nip, school_id: school.id };
   const admin = createAdminClient();
   const { error } = await admin.auth.admin.createUser({
     email: `${nip}@${EMAIL_DOMAIN}`,
     password: nip,
     email_confirm: true,
-    user_metadata: { role, full_name: name, username: nip, nip, school_id: school.id },
+    app_metadata: { lms_profile: initialProfile },
+    // Keep the legacy payload during rollout; the hardened trigger trusts only app_metadata.
+    user_metadata: initialProfile,
   });
   if (error) return { ok: false, message: friendlyAuthError(error.message, "NIP") };
 

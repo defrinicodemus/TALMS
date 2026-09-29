@@ -25,7 +25,9 @@ export function AdminDashboard({ data }: { data: Data }) {
       </div>
 
       <Card className="rounded-none border-0 p-6 shadow-soft">
-        <h2 className="font-display text-xl font-bold">Siswa per Kelas</h2>
+        <h2 className="font-display text-xl font-bold">
+          Siswa per Kelas {data.activeAcademicYearLabel ? `TA ${data.activeAcademicYearLabel}` : ""}
+        </h2>
         <div className="mt-1 text-xs text-muted-foreground">
           Distribusi jumlah siswa di setiap rombel
         </div>
