@@ -18,7 +18,7 @@ export default async function CurriculumPage() {
       <PageHeader
         icon="🧭"
         title="Kelola Kurikulum"
-        subtitle="Capaian Pembelajaran (CP) dan Alur Tujuan Pembelajaran (ATP)"
+        subtitle="CP dan TP sebagai acuan materi, tugas, kuis, dan Learning Path siswa"
         rounded="blunt"
       />
       {combos.length === 0 ? (

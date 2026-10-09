@@ -86,6 +86,7 @@ export async function createMaterial(
   if (error) return { ok: false, message: error.message };
 
   revalidatePath("/classroom");
+  revalidatePath("/curriculum");
   revalidatePath("/subjects");
   return {
     ok: true,
@@ -125,6 +126,7 @@ export async function updateMaterial(
   if (error) return { ok: false, message: error.message };
 
   revalidatePath("/classroom");
+  revalidatePath("/curriculum");
   revalidatePath("/subjects");
   return { ok: true, message: "Materi berhasil diperbarui." };
 }
@@ -139,6 +141,7 @@ export async function deleteMaterial(id: string): Promise<{ ok: boolean; message
   if (error) return { ok: false, message: error.message };
 
   revalidatePath("/classroom");
+  revalidatePath("/curriculum");
   return { ok: true, message: "Materi berhasil dihapus." };
 }
 
@@ -257,6 +260,7 @@ export async function createAssignment(
   }
 
   revalidatePath("/classroom");
+  revalidatePath("/curriculum");
   revalidatePath("/subjects");
   return {
     ok: true,
@@ -293,6 +297,7 @@ export async function updateAssignment(
   if (error) return { ok: false, message: error.message };
 
   revalidatePath("/classroom");
+  revalidatePath("/curriculum");
   revalidatePath("/subjects");
   return { ok: true, message: "Tugas berhasil diperbarui." };
 }
@@ -377,6 +382,7 @@ export async function deleteAssignment(id: string): Promise<{ ok: boolean; messa
   if (error) return { ok: false, message: error.message };
 
   revalidatePath("/classroom");
+  revalidatePath("/curriculum");
   return { ok: true, message: "Tugas berhasil dihapus." };
 }
 
@@ -452,6 +458,7 @@ export async function createQuiz(formData: FormData): Promise<{ ok: boolean; mes
   if (error) return { ok: false, message: error.message };
 
   revalidatePath("/classroom");
+  revalidatePath("/curriculum");
   return { ok: true, message: "Kuis berhasil disimpan. Tambahkan soal lalu publikasikan kuis." };
 }
 
@@ -514,6 +521,7 @@ export async function updateQuiz(formData: FormData): Promise<{ ok: boolean; mes
   if (error) return { ok: false, message: error.message };
 
   revalidatePath("/classroom");
+  revalidatePath("/curriculum");
   revalidatePath("/subjects");
   return { ok: true, message: "Kuis berhasil diperbarui." };
 }
@@ -592,6 +600,7 @@ export async function deleteQuiz(id: string): Promise<{ ok: boolean; message: st
   if (error) return { ok: false, message: error.message };
 
   revalidatePath("/classroom");
+  revalidatePath("/curriculum");
   return { ok: true, message: "Kuis berhasil dihapus." };
 }
 

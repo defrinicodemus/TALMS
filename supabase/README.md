@@ -205,6 +205,68 @@ The migration does not recalculate existing grades. Restricting direct access to
 quiz answer keys and narrowing teacher permissions by both class and subject are
 separate pending fixes. Teacher grading scope is unchanged by this migration.
 
+## Curriculum dependency protection
+
+CP/TP are teaching references for activities and the student's Learning Path.
+They do not have an approval, publication, archive, or curriculum-version workflow.
+There is still one CP per class/subject, containing ordered TP rows.
+
+Apply `migrations/20260930000000_curriculum_dependencies.sql` once, after the
+earlier migrations, before deploying/restarting the updated app. The new app needs
+the usage and reorder RPCs. This file has not been applied to your hosted database
+by the code change.
+
+The migration replaces the three activity-to-TP `ON DELETE SET NULL` constraints
+with `ON DELETE RESTRICT`: `materials`, `assignments`, and `class_meetings`.
+Quizzes are `assignments.kind = 'quiz'`; other assignment kinds count as tasks.
+Journal references also count as usage, including when there are no materials,
+tasks, or quizzes. Draft/inactive activities still count because their links exist.
+
+Server actions check dependencies before deleting, and database triggers/FKs
+enforce the same rule for direct writes and concurrent changes. An unused CP can
+delete its unused TP children; a used CP or TP cannot be deleted. Editing changes
+CP/TP text without replacing IDs or moving children. Teachers see fresh usage
+counts and a warning before editing a used CP/TP.
+
+Used TPs keep their `sort_order`. Adjacent unused TPs can swap in one transaction,
+but cannot cross a used TP. New TPs append at `max(sort_order) + 1`, so deleting
+an earlier TP does not create duplicate orders on insertion. Displayed TP numbers
+use `sort_order + 1` and can have gaps after deletion. Existing duplicate orders
+are not rewritten by this migration; a swap between equal orders is rejected
+with an explanation and needs a separate review of those existing rows.
+
+No existing CP/TP, activity, submission, grade, or student row is rewritten or
+deleted by the migration. No lifecycle column is added. New/reassigned activity
+links must match the TP's class and subject; unrelated edits to legacy activities
+keep their existing links.
+
+### Manual verification
+
+1. As a teacher, create a CP and several TPs in a test class/subject. Edit, swap,
+   and delete unused TPs; deletion should ask for confirmation. Delete an unused
+   CP with unused children and verify it can be recreated.
+2. Link two materials, one task, and one quiz to one TP. Return to Kelola Kurikulum:
+   verify the counts, the order lock, and absence of its delete button. Also try
+   a TP used only by a journal entry.
+3. Press Edit on the used TP, cancel the warning, then repeat and choose Tetap
+   Edit. Correct a typo and save. Verify that activities and the student's
+   Learning Path show the corrected text with the same associations and grades.
+   Repeat Edit on its CP and check the context warning.
+4. Try moving an unused TP across a used TP. The control should be disabled.
+   Swap two neighboring unused TPs and add another TP; used orders must stay fixed.
+5. On test data, attempt DELETE of the used TP/CP and UPDATE of the used TP's
+   sort_order directly through Supabase, bypassing the UI. They must fail.
+   Confirm that activities, submissions, grades, and attendance remain present.
+6. On two tabs, open curriculum before linking an activity in the other tab.
+   Edit/delete/reorder from the older tab: edit inspection must fetch current
+   usage, and stale delete/reorder requests must be rejected by the backend.
+
+`npm run test:security` covers these backend rules against the actual migrations
+in disposable PGlite and tests the real server actions with mocked I/O. It also
+compares existing data before/after migration and verifies rollback of a failed
+swap. It does not exercise simultaneous database connections or the hosted UI;
+the manual checks above remain necessary after deployment.
+
 ## Demo accounts (seeded by seed.sql)
 
 Password is always `<username>123`.

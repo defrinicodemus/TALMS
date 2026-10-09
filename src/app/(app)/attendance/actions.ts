@@ -103,5 +103,6 @@ export async function saveMeeting(
   }
 
   revalidatePath("/attendance");
+  revalidatePath("/curriculum");
   return { ok: true, message: "Presensi dan jurnal hari ini berhasil disimpan.", lastInputAt };
 }
