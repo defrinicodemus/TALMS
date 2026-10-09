@@ -12,7 +12,9 @@ export async function getAcademicStructure() {
       supabase
         .from("academic_years")
         .select("id, year_label, semester, is_active")
-        .order("year_label", { ascending: false }),
+        .order("is_active", { ascending: false })
+        .order("year_label", { ascending: false })
+        .order("semester"),
       supabase
         .from("profiles")
         .select("id, full_name, nisn, class_id")

@@ -221,6 +221,8 @@ export async function createClass(formData: FormData): Promise<{ ok: boolean; me
   }
 
   revalidatePath("/academic");
+  revalidatePath("/master-kelas");
+  revalidatePath("/users");
   return { ok: true, message: "Kelas berhasil ditambahkan." };
 }
 
@@ -252,6 +254,8 @@ export async function updateClass(formData: FormData): Promise<{ ok: boolean; me
   }
 
   revalidatePath("/academic");
+  revalidatePath("/master-kelas");
+  revalidatePath("/users");
   return { ok: true, message: "Kelas berhasil diperbarui." };
 }
 
@@ -301,6 +305,8 @@ export async function deleteClass(id: string): Promise<{ ok: boolean; message: s
 
   await supabase.from("classes").delete().eq("id", id);
   revalidatePath("/academic");
+  revalidatePath("/master-kelas");
+  revalidatePath("/users");
   return { ok: true, message: "Kelas berhasil dihapus." };
 }
 
@@ -601,7 +607,7 @@ export async function createAcademicYear(
 
   const { error } = await supabase
     .from("academic_years")
-    .insert({ school_id: school.id, year_label: yearLabel, semester });
+    .insert({ school_id: school.id, year_label: yearLabel, semester, is_active: false });
   if (error) {
     return {
       ok: false,
@@ -610,7 +616,7 @@ export async function createAcademicYear(
   }
 
   revalidatePath("/academic");
-  return { ok: true, message: "Tahun ajaran berhasil ditambahkan." };
+  return { ok: true, message: "Tahun ajaran ditambahkan dengan status Belum Aktif." };
 }
 
 export async function setActiveAcademicYear(
@@ -624,20 +630,27 @@ export async function setActiveAcademicYear(
   if (!id) return { ok: false, message: "Tahun ajaran tidak valid." };
 
   const supabase = await createClient();
-  const { data: year } = await supabase
-    .from("academic_years")
-    .select("school_id")
-    .eq("id", id)
-    .single();
-  if (!year) return { ok: false, message: "Tahun ajaran tidak ditemukan." };
-
-  await supabase
-    .from("academic_years")
-    .update({ is_active: false })
-    .eq("school_id", year.school_id);
-  const { error } = await supabase.from("academic_years").update({ is_active: true }).eq("id", id);
+  const { error } = await supabase.rpc("set_active_academic_year", { p_id: id });
   if (error) return { ok: false, message: error.message };
 
   revalidatePath("/academic");
+  revalidatePath("/master-kelas");
+  revalidatePath("/users");
+  revalidatePath("/dashboard");
+  revalidatePath("/", "layout");
   return { ok: true, message: "Tahun ajaran aktif berhasil diganti." };
+}
+
+export async function deactivateAcademicYear(
+  formData: FormData,
+): Promise<{ ok: boolean; message: string }> {
+  const roleError = assertRole(await getCurrentUser(), ["admin"]);
+  if (roleError) return roleError;
+  const id = String(formData.get("id") ?? "");
+  if (!id) return { ok: false, message: "Tahun ajaran tidak valid." };
+  const supabase = await createClient();
+  const { error } = await supabase.rpc("deactivate_academic_year", { p_id: id });
+  if (error) return { ok: false, message: error.message };
+  revalidatePath("/", "layout");
+  return { ok: true, message: "Tahun ajaran dinonaktifkan. Masa administrasi dimulai." };
 }

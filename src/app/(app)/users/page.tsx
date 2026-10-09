@@ -2,7 +2,7 @@ import { PageHeader } from "@/components/PageHeader";
 import { Card } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { listStudentsWithAvg, listTeachersWithStats, getPrincipal } from "@/lib/data/people";
-import { listClasses } from "@/lib/data/school";
+import { listAcademicYears, listClasses } from "@/lib/data/school";
 import { requireRole } from "@/lib/auth/guard";
 import { StudentsPanel } from "./StudentsPanel";
 import { TeachersPanel } from "./TeachersPanel";
@@ -11,16 +11,17 @@ import { PrincipalPanel } from "./PrincipalPanel";
 export default async function UsersPage() {
   await requireRole(["admin"]);
 
-  const [students, teachers, principal, classes] = await Promise.all([
+  const [students, teachers, principal, classes, years] = await Promise.all([
     listStudentsWithAvg(),
     listTeachersWithStats(),
     getPrincipal(),
     listClasses(),
+    listAcademicYears(),
   ]);
 
   return (
     <div className="space-y-6">
-      <PageHeader 
+      <PageHeader
         icon="👥"
         title="Manajemen Pengguna"
         subtitle="Kelola akun guru, siswa, dan kepala sekolah"
@@ -40,7 +41,7 @@ export default async function UsersPage() {
 
         <TabsContent value="siswa" className="mt-4">
           <Card className="rounded-none border-0 p-6 shadow-soft">
-            <StudentsPanel students={students} classes={classes} />
+            <StudentsPanel students={students} classes={classes} years={years} />
           </Card>
         </TabsContent>
 

@@ -1,4 +1,5 @@
 import { createClient } from "@/lib/supabase/server";
+import { getActiveClassIds } from "@/lib/data/active-period";
 
 export type TeacherActivityKind = "materi" | "tugas" | "kuis" | "presensi";
 
@@ -22,6 +23,7 @@ export interface TeacherMonitoringData {
 
 export async function getTeacherMonitoringData(): Promise<TeacherMonitoringData> {
   const supabase = await createClient();
+  const classIds = await getActiveClassIds();
 
   const [
     { data: teacherProfiles },
@@ -30,9 +32,15 @@ export async function getTeacherMonitoringData(): Promise<TeacherMonitoringData>
     { data: meetings },
   ] = await Promise.all([
     supabase.from("profiles").select("id, full_name").eq("role", "teacher").order("full_name"),
-    supabase.from("materials").select("id, teacher_id, title, created_at"),
-    supabase.from("assignments").select("id, teacher_id, title, kind, created_at"),
-    supabase.from("class_meetings").select("id, teacher_id, created_at, classes(name)"),
+    supabase.from("materials").select("id, teacher_id, title, created_at").in("class_id", classIds),
+    supabase
+      .from("assignments")
+      .select("id, teacher_id, title, kind, created_at")
+      .in("class_id", classIds),
+    supabase
+      .from("class_meetings")
+      .select("id, teacher_id, created_at, classes(name)")
+      .in("class_id", classIds),
   ]);
 
   const events: TeacherActivityEvent[] = [];
@@ -133,12 +141,7 @@ export interface TeacherDetailData {
 export async function getTeacherDetail(teacherId: string): Promise<TeacherDetailData | null> {
   const supabase = await createClient();
 
-  const now = new Date();
-  const isFirstSemester = now.getMonth() >= 6;
-  const semesterStart = isFirstSemester
-    ? new Date(now.getFullYear(), 6, 1)
-    : new Date(now.getFullYear(), 0, 1);
-  const semesterStartIso = semesterStart.toISOString();
+  const classIds = await getActiveClassIds();
 
   const [
     { data: teacher },
@@ -156,22 +159,23 @@ export async function getTeacherDetail(teacherId: string): Promise<TeacherDetail
     supabase
       .from("class_teacher_subjects")
       .select("class_id, subject_id, classes(grade_level), subjects(name)")
-      .eq("teacher_id", teacherId),
+      .eq("teacher_id", teacherId)
+      .in("class_id", classIds),
     supabase
       .from("materials")
       .select("id, class_id, subject_id, title, created_at")
       .eq("teacher_id", teacherId)
-      .gte("created_at", semesterStartIso),
+      .in("class_id", classIds),
     supabase
       .from("assignments")
       .select("id, class_id, subject_id, title, kind, due_at, created_at")
       .eq("teacher_id", teacherId)
-      .gte("created_at", semesterStartIso),
+      .in("class_id", classIds),
     supabase
       .from("class_meetings")
       .select("id, class_id, subject_id, meeting_date, created_at")
       .eq("teacher_id", teacherId)
-      .gte("created_at", semesterStartIso),
+      .in("class_id", classIds),
   ]);
 
   if (!teacher) return null;

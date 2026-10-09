@@ -92,8 +92,8 @@ before(async () => {
     grant usage on schema public, auth to anon, authenticated, service_role;
     grant all on all tables in schema public to anon, authenticated, service_role;
     insert into public.schools (id, name) values ('${id(20)}', 'Test school');
-    insert into public.academic_years (id, school_id, year_label, semester)
-      values ('${id(30)}', '${id(20)}', '2026/2027', 'ganjil');
+    insert into public.academic_years (id, school_id, year_label, semester, is_active)
+      values ('${id(30)}', '${id(20)}', '2026/2027', 'ganjil', true);
     insert into public.classes (id, school_id, academic_year_id, name, grade_level) values
       ('${classroom}', '${id(20)}', '${id(30)}', '4A', 4),
       ('${otherClassroom}', '${id(20)}', '${id(30)}', '5A', 5);

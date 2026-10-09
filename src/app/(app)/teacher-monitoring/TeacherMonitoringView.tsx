@@ -84,8 +84,11 @@ export function TeacherMonitoringView({ data }: { data: TeacherMonitoringData })
 
   const periodStart = useMemo(() => getPeriodStart(period), [period]);
   const periodEvents = useMemo(
-    () => data.events.filter((e) => new Date(e.timestamp) >= periodStart),
-    [data.events, periodStart],
+    () =>
+      period === "semester"
+        ? data.events
+        : data.events.filter((e) => new Date(e.timestamp) >= periodStart),
+    [data.events, period, periodStart],
   );
 
   const rows: TeacherRow[] = useMemo(() => {

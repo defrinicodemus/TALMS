@@ -11,8 +11,11 @@ export async function getTeacherClassSubjects(teacherId: string): Promise<Teache
   const supabase = await createClient();
   const { data } = await supabase
     .from("class_teacher_subjects")
-    .select("class_id, subject_id, classes(name), subjects(name)")
-    .eq("teacher_id", teacherId);
+    .select(
+      "class_id, subject_id, classes!inner(name, academic_years!inner(is_active)), subjects(name)",
+    )
+    .eq("teacher_id", teacherId)
+    .eq("classes.academic_years.is_active", true);
 
   return (data ?? [])
     .map((row) => ({

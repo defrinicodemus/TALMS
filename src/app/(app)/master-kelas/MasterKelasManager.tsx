@@ -6,6 +6,11 @@ import { UserMinus } from "lucide-react";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import {
+  AcademicClassSelector,
+  type AcademicClassOption,
+  type AcademicYearOption,
+} from "@/components/AcademicClassSelector";
+import {
   Select,
   SelectContent,
   SelectItem,
@@ -34,7 +39,7 @@ import {
 } from "@/components/ui/alert-dialog";
 import { setClassSubjectTeacher, assignStudentToClass } from "../actions";
 
-type ClassOption = { id: string; name: string; grade_level: number };
+type ClassOption = AcademicClassOption & { grade_level: number; label: string };
 type Subject = {
   id: string;
   name: string;
@@ -62,18 +67,27 @@ const NONE = "__none__";
 
 export function MasterKelasManager({
   classes,
+  years,
   subjects,
   teachers,
   assignments,
   students,
 }: {
   classes: ClassOption[];
+  years: AcademicYearOption[];
   subjects: Subject[];
   teachers: Teacher[];
   assignments: Assignment[];
   students: Student[];
 }) {
-  const [classId, setClassId] = useState(classes[0]?.id ?? "");
+  const [selectedYearId, setYearId] = useState(years[0]?.id ?? "");
+  const yearId = years.some((year) => year.id === selectedYearId)
+    ? selectedYearId
+    : (years[0]?.id ?? "");
+  const availableClasses = classes.filter((c) => c.academicYearId === yearId);
+  const [selectedClassId, setClassId] = useState(availableClasses[0]?.id ?? "");
+  const classId =
+    availableClasses.find((c) => c.id === selectedClassId)?.id ?? availableClasses[0]?.id ?? "";
   const [isPending, startTransition] = useTransition();
   const [pickerOpen, setPickerOpen] = useState(false);
 
@@ -91,8 +105,8 @@ export function MasterKelasManager({
     () => students.filter((s) => s.classId !== classId),
     [students, classId],
   );
-  const selectedClass = classes.find((c) => c.id === classId);
-  const selectedClassName = selectedClass?.name ?? "-";
+  const selectedClass = availableClasses.find((c) => c.id === classId);
+  const selectedClassName = selectedClass?.label ?? "-";
   const visibleSubjects = useMemo(() => {
     if (!selectedClass) return subjects;
     return subjects.filter((s) =>
@@ -137,26 +151,30 @@ export function MasterKelasManager({
   return (
     <div className="space-y-6">
       <Card className="rounded-none border-0 p-6 shadow-soft">
-        <div className="flex items-center gap-3">
-          <span className="text-sm font-medium text-muted-foreground">Kelas:</span>
-          <Select value={classId} onValueChange={setClassId}>
-            <SelectTrigger className="w-[200px] rounded-none">
-              <SelectValue placeholder="Pilih kelas" />
-            </SelectTrigger>
-            <SelectContent>
-              {classes.map((c) => (
-                <SelectItem key={c.id} value={c.id}>
-                  {c.name}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        </div>
+        <AcademicClassSelector
+          years={years}
+          classes={classes}
+          yearId={yearId}
+          classId={classId}
+          onYearChange={(nextYearId) => {
+            setYearId(nextYearId);
+            setClassId(classes.find((c) => c.academicYearId === nextYearId)?.id ?? "");
+            setPickerOpen(false);
+          }}
+          onClassChange={(nextClassId) => {
+            setClassId(nextClassId);
+            setPickerOpen(false);
+          }}
+          disabled={isPending}
+          className="max-w-xl"
+        />
       </Card>
 
       {!classId ? (
         <p className="text-sm text-muted-foreground">
-          Belum ada kelas. Tambahkan kelas di Struktur Akademik dulu.
+          {yearId
+            ? "Belum ada kelas pada periode ini. Tambahkan kelas di Struktur Akademik terlebih dahulu."
+            : "Belum ada tahun ajaran. Tambahkan tahun ajaran di Struktur Akademik terlebih dahulu."}
         </p>
       ) : (
         <div className="grid gap-6 lg:grid-cols-2">
@@ -251,7 +269,12 @@ export function MasterKelasManager({
                   </div>
                   <AlertDialog>
                     <AlertDialogTrigger asChild>
-                      <Button size="sm" variant="ghost" className="rounded-none" disabled={isPending}>
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        className="rounded-none"
+                        disabled={isPending}
+                      >
                         <UserMinus className="h-4 w-4" />
                       </Button>
                     </AlertDialogTrigger>

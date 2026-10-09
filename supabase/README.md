@@ -267,6 +267,115 @@ compares existing data before/after migration and verifies rollback of a failed
 swap. It does not exercise simultaneous database connections or the hosted UI;
 the manual checks above remain necessary after deployment.
 
+## Atomic academic-year activation
+
+Apply `migrations/20261010000000_atomic_academic_year_activation.sql` once, after
+the earlier migrations, before using activation in the updated app. Run it through
+the normal migration workflow or Supabase SQL Editor. The code change does not
+apply this migration to the hosted database.
+
+The migration adds an admin-only, invoker-rights RPC and a partial unique index:
+only one year/semester can be active per school. Switching periods locks the school
+and updates both flags in one transaction; a failure preserves the previous state.
+It adds no table or lifecycle status and does not rewrite existing placements,
+teacher assignments, classes, or years. New years still use `is_active = false`.
+
+If a school already has multiple active periods, the migration stops before making
+changes. Review the conflicting rows explicitly rather than automatically choosing
+a period. This read-only query identifies them:
+
+```sql
+select school_id, id, year_label, semester
+from public.academic_years
+where is_active and school_id in (
+  select school_id from public.academic_years
+  where is_active group by school_id having count(*) > 1
+)
+order by school_id, year_label, semester;
+```
+
+Verify as an admin after applying:
+
+1. Add an inactive year and create a class using the existing year field. Confirm
+   the year/semester group displays it without activation.
+2. Confirm existing class selectors in Master Kelas and Manajemen Pengguna show
+   year and semester, including when classes have the same name.
+3. After applying the maintenance migration below, first deactivate the current
+   period. Click **Jadikan Aktif** and cancel: all periods must remain inactive.
+   Confirm activation instead: only the selected period becomes active, and old
+   years/classes remain available.
+
+Student placement and promotion still update the current class immediately;
+teacher assignments retain their existing behavior. Perform semester transfers
+during the closed administration window described below. Activation itself does
+not move students or copy teacher assignments.
+
+`npm run test:security` covers real migration/RLS behavior in disposable PGlite,
+data preservation, rollback after either update fails, duplicate-active rejection,
+and the actual server actions with mocked I/O. It does not exercise simultaneous
+database connections or the hosted UI.
+
+## Semester administration window
+
+Apply `migrations/20261010000001_academic_maintenance.sql` once **after** the atomic
+activation migration, before restarting/deploying the updated application. Do not
+rerun older migrations. This change has not been applied to the hosted database.
+
+There are no new tables, columns or lifecycle values. Zero active periods in a
+school means administration is in progress. The migration adds/replaces access
+functions, restrictive RLS policies and a guard on privileged quiz submission
+writes; it preserves existing rows and all table/column definitions.
+
+The workflow is **active -> deactivate -> administer -> activate**:
+
+- `deactivate_academic_year` checks the admin role and the specific active ID.
+  It locks the school row, changes only the selected period's `is_active` to false,
+  and rejects stale requests instead of closing a different period.
+- `set_active_academic_year` now rejects switching directly to a different period
+  while another one is active. Activation after closure uses the same school lock.
+  Activating the already active period is idempotent. The partial unique index
+  still prevents two active periods per school.
+- While closed, admins retain access. Other roles can sign in/out and see the
+  administration notice. Middleware blocks direct page/PDF access; the shared
+  `getCurrentUser` guard checks server actions, including from old tabs. An open
+  visible tab checks status every 30 seconds and on focus. Backend checks do not
+  wait for that timer. Previously rendered content is replaced on the next check.
+- Restrictive RLS also closes direct Supabase activity queries/writes. Own profile
+  identity remains readable for authentication. Existing ownership policies still
+  apply. The privileged quiz-save path rechecks period access at the write boundary.
+- When reopened, student/teacher operational classes are limited to the active
+  period. A student still assigned to an old class sees a placement notice. The
+  stored `profiles.class_id` is not rewritten by activation or the migration.
+- Principal dashboards and teacher monitoring filter the active period. Principals
+  can still read old periods through the existing school-report selector while open.
+
+This is a temporary closure, not deferred student enrollment. Admin placement and
+promotion edits take effect in storage immediately. Reopening an old period does
+not undo transfers. No extra year selectors, archive workflow, or history tables
+are introduced. Activity content and grading calculations are unchanged.
+
+### Verification after deployment
+
+1. With an active period, open separate student/teacher/principal sessions. As
+   admin, cancel the deactivation dialog and confirm that nothing changes.
+2. Confirm deactivation. Verify the notice for all three roles, including a direct
+   activity URL and the PDF endpoint; test an old tab and a save from that tab.
+3. Verify admin class/placement/teacher-assignment operations remain available while
+   closed. Inspect the year/semester in existing class labels before changing data.
+4. Activate the target period, then use **Cek Kembali** in the other sessions.
+   Check new student placements, teacher assignments, and principal monitoring.
+   Confirm old school reports are still selectable and old records are preserved.
+5. A student not assigned to the new period should see the placement notice, not
+   the old class's activities. Verify logout remains available during closure.
+
+`npm run test:security` covers migration preservation, unchanged table/column
+definitions, all role gates, admin operations during closure, reopening, stale
+requests, failed-write rollback, direct RLS access, privileged quiz saves, and
+middleware/server-action guards. Database tests use disposable PGlite, not the
+hosted database or simultaneous PostgreSQL connections. The older activation
+migration has a separate historical regression suite; current switching behavior
+is covered by `academic-maintenance.test.mjs`.
+
 ## Demo accounts (seeded by seed.sql)
 
 Password is always `<username>123`.

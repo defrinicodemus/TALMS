@@ -32,7 +32,12 @@ import {
   AlertDialogTitle,
   AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
-import { createAcademicYear, setActiveAcademicYear, deleteAcademicYear } from "../actions";
+import {
+  createAcademicYear,
+  setActiveAcademicYear,
+  deactivateAcademicYear,
+  deleteAcademicYear,
+} from "../actions";
 
 type YearRow = { id: string; year_label: string; semester: string; is_active: boolean };
 
@@ -40,6 +45,7 @@ export function YearsManager({ years }: { years: YearRow[] }) {
   const [open, setOpen] = useState(false);
   const [isPending, startTransition] = useTransition();
   const [activatingId, setActivatingId] = useState<string | null>(null);
+  const activeYear = years.find((year) => year.is_active);
 
   function handleSubmit(formData: FormData) {
     startTransition(async () => {
@@ -53,15 +59,20 @@ export function YearsManager({ years }: { years: YearRow[] }) {
     });
   }
 
-  function handleActivate(id: string) {
+  function handleActivation(id: string, activate: boolean) {
     setActivatingId(id);
     startTransition(async () => {
-      const formData = new FormData();
-      formData.set("id", id);
-      const result = await setActiveAcademicYear(formData);
-      if (result.ok) toast.success(result.message);
-      else toast.error(result.message);
-      setActivatingId(null);
+      try {
+        const formData = new FormData();
+        formData.set("id", id);
+        const result = await (activate ? setActiveAcademicYear : deactivateAcademicYear)(formData);
+        if (result.ok) toast.success(result.message);
+        else toast.error(result.message);
+      } catch {
+        toast.error("Status tahun ajaran gagal diubah. Coba lagi.");
+      } finally {
+        setActivatingId(null);
+      }
     });
   }
 
@@ -74,12 +85,18 @@ export function YearsManager({ years }: { years: YearRow[] }) {
   }
 
   return (
-    <Card className="rounded-none border-0 p-6 shadow-soft">
-      <div className="flex items-center justify-between">
-        <h2 className="font-display text-xl font-bold">Tahun Ajaran</h2>
+    <Card className="rounded-none border-0 p-4 shadow-soft sm:p-6">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+        <div>
+          <h2 className="font-display text-xl font-bold">Tahun Ajaran</h2>
+          <p className="mt-1 text-sm text-muted-foreground">
+            Nonaktifkan periode yang selesai, siapkan semester berikutnya, lalu aktifkan untuk
+            membuka akses kembali.
+          </p>
+        </div>
         <Dialog open={open} onOpenChange={setOpen}>
           <DialogTrigger asChild>
-            <Button size="sm" className="rounded-none">
+            <Button size="sm" className="shrink-0 rounded-none">
               + Tambah Tahun Ajaran
             </Button>
           </DialogTrigger>
@@ -89,13 +106,19 @@ export function YearsManager({ years }: { years: YearRow[] }) {
             </DialogHeader>
             <form action={handleSubmit} className="space-y-3">
               <div>
-                <Label>Tahun Ajaran</Label>
-                <Input name="year_label" placeholder="2026/2027" className="mt-1" required />
+                <Label htmlFor="academic-year-label">Tahun Ajaran</Label>
+                <Input
+                  id="academic-year-label"
+                  name="year_label"
+                  placeholder="2026/2027"
+                  className="mt-1"
+                  required
+                />
               </div>
               <div>
-                <Label>Semester</Label>
+                <Label htmlFor="academic-year-semester">Semester</Label>
                 <Select name="semester" defaultValue="ganjil" required>
-                  <SelectTrigger className="mt-1">
+                  <SelectTrigger id="academic-year-semester" className="mt-1">
                     <SelectValue placeholder="Pilih semester" />
                   </SelectTrigger>
                   <SelectContent>
@@ -104,6 +127,10 @@ export function YearsManager({ years }: { years: YearRow[] }) {
                   </SelectContent>
                 </Select>
               </div>
+              <p className="rounded-none bg-muted/50 p-3 text-sm text-muted-foreground">
+                Tahun ajaran ini belum aktif setelah disimpan. Gunakan tombol Jadikan Aktif saat
+                siap digunakan.
+              </p>
               <Button type="submit" className="w-full rounded-none" disabled={isPending}>
                 {isPending ? "Menyimpan..." : "Simpan"}
               </Button>
@@ -111,19 +138,31 @@ export function YearsManager({ years }: { years: YearRow[] }) {
           </DialogContent>
         </Dialog>
       </div>
-      <div className="mt-4 grid gap-3 sm:grid-cols-3">
+      <div className="mt-4 rounded-none border border-dashed p-3 text-sm">
+        <p className="font-medium">
+          {activeYear
+            ? "Pembelajaran sedang dibuka"
+            : "Masa administrasi — akses pembelajaran ditutup"}
+        </p>
+        <p className="mt-1 text-muted-foreground">
+          {activeYear
+            ? "Untuk pergantian semester, nonaktifkan tahun ajaran aktif sebelum memindahkan siswa dan menyiapkan penugasan guru."
+            : "Admin tetap dapat mengelola kelas, penempatan siswa, dan penugasan guru. Murid, Guru, dan Kepsek melihat pemberitahuan administrasi sampai periode diaktifkan."}
+        </p>
+      </div>
+      <div className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
         {years.map((y) => (
           <Card
             key={y.id}
-            className={`relative rounded-none border-0 p-4 shadow-soft ${y.is_active ? "bg-primary text-primary-foreground" : "bg-card"}`}
+            className={`relative flex flex-col items-start rounded-none p-4 ${y.is_active ? "border-primary bg-primary text-primary-foreground" : "border-border bg-background shadow-none"}`}
           >
             {!y.is_active && (
               <AlertDialog>
                 <AlertDialogTrigger asChild>
                   <button
                     className="absolute right-3 top-3 text-muted-foreground hover:text-destructive"
+                    aria-label={`Hapus tahun ajaran ${y.year_label} semester ${y.semester}`}
                     disabled={isPending}
-                    aria-label="Hapus tahun ajaran"
                   >
                     <Trash2 className="h-4 w-4" />
                   </button>
@@ -145,22 +184,118 @@ export function YearsManager({ years }: { years: YearRow[] }) {
                 </AlertDialogContent>
               </AlertDialog>
             )}
-            <div className="font-display text-xl font-bold">{y.year_label}</div>
+            <div className="pr-6 font-display text-xl font-bold">{y.year_label}</div>
             <div className="mt-1 text-sm capitalize opacity-90">Semester {y.semester}</div>
-            {y.is_active ? (
-              <div className="mt-2 inline-flex rounded-none bg-white/20 px-2 py-0.5 text-xs">
-                Aktif
-              </div>
-            ) : (
-              <Button
-                size="sm"
-                variant="outline"
-                className="mt-2 rounded-none"
-                disabled={isPending}
-                onClick={() => handleActivate(y.id)}
-              >
-                {activatingId === y.id ? "Mengaktifkan..." : "Jadikan Aktif"}
-              </Button>
+            <div
+              className={`mt-2 inline-flex rounded-none px-2 py-0.5 text-xs font-medium ${y.is_active ? "bg-white/20" : "bg-muted text-muted-foreground"}`}
+            >
+              {y.is_active ? "Aktif" : "Belum Aktif"}
+            </div>
+            {y.is_active && (
+              <AlertDialog>
+                <AlertDialogTrigger asChild>
+                  <Button
+                    size="sm"
+                    variant="secondary"
+                    className="mt-4 h-auto w-full whitespace-normal rounded-none py-2"
+                    disabled={isPending}
+                  >
+                    {activatingId === y.id ? "Menonaktifkan..." : "Nonaktifkan Tahun Ajaran"}
+                  </Button>
+                </AlertDialogTrigger>
+                <AlertDialogContent className="max-h-[90dvh] overflow-y-auto">
+                  <AlertDialogHeader>
+                    <AlertDialogTitle>
+                      Nonaktifkan Tahun Ajaran {y.year_label} — Semester{" "}
+                      {y.semester === "ganjil" ? "Ganjil" : "Genap"}?
+                    </AlertDialogTitle>
+                    <AlertDialogDescription asChild>
+                      <div className="space-y-3">
+                        <p>
+                          Akses pembelajaran Murid dan Guru serta monitoring Kepsek akan ditutup
+                          sementara untuk administrasi pergantian semester.
+                        </p>
+                        <p>
+                          Admin tetap dapat mengelola kelas, penempatan siswa, dan penugasan guru.
+                          Seluruh data lama tetap tersimpan.
+                        </p>
+                        <p>
+                          Perubahan penempatan langsung tersimpan. Mengaktifkan kembali periode lama
+                          tidak membatalkan pemindahan yang sudah dilakukan.
+                        </p>
+                      </div>
+                    </AlertDialogDescription>
+                  </AlertDialogHeader>
+                  <AlertDialogFooter>
+                    <AlertDialogCancel disabled={isPending}>Batal</AlertDialogCancel>
+                    <AlertDialogAction
+                      disabled={isPending}
+                      onClick={() => handleActivation(y.id, false)}
+                    >
+                      Nonaktifkan Tahun Ajaran
+                    </AlertDialogAction>
+                  </AlertDialogFooter>
+                </AlertDialogContent>
+              </AlertDialog>
+            )}
+            {!y.is_active && (
+              <AlertDialog>
+                <AlertDialogTrigger asChild>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="mt-4 rounded-none"
+                    disabled={isPending || Boolean(activeYear)}
+                    title={
+                      activeYear ? "Nonaktifkan tahun ajaran aktif terlebih dahulu." : undefined
+                    }
+                    aria-label={`Jadikan aktif tahun ajaran ${y.year_label} semester ${y.semester}`}
+                  >
+                    {activatingId === y.id ? "Mengaktifkan..." : "Jadikan Aktif"}
+                  </Button>
+                </AlertDialogTrigger>
+                <AlertDialogContent className="max-h-[90dvh] overflow-y-auto">
+                  <AlertDialogHeader>
+                    <AlertDialogTitle>
+                      Aktifkan Tahun Ajaran {y.year_label} — Semester{" "}
+                      {y.semester === "ganjil" ? "Ganjil" : "Genap"}?
+                    </AlertDialogTitle>
+                    <AlertDialogDescription asChild>
+                      <div className="space-y-3">
+                        <p>
+                          Tahun ajaran ini akan menjadi tahun ajaran utama sekolah. Akses Murid,
+                          Guru, dan Kepsek akan dibuka kembali.
+                        </p>
+                        {activeYear && (
+                          <p>
+                            Tahun ajaran aktif saat ini:{" "}
+                            <strong>
+                              {activeYear.year_label} — Semester{" "}
+                              {activeYear.semester === "ganjil" ? "Ganjil" : "Genap"}
+                            </strong>
+                            .
+                          </p>
+                        )}
+                        <p>
+                          Pastikan kelas, penempatan siswa, serta penugasan guru telah disiapkan
+                          dengan benar.
+                        </p>
+                        <p>Tahun ajaran sebelumnya tetap tersimpan sebagai data lama.</p>
+                        <p>Aktivasi tidak memindahkan siswa atau menyalin penugasan guru.</p>
+                      </div>
+                    </AlertDialogDescription>
+                  </AlertDialogHeader>
+                  <AlertDialogFooter>
+                    <AlertDialogCancel disabled={isPending}>Batal</AlertDialogCancel>
+                    <AlertDialogAction
+                      disabled={isPending}
+                      onClick={() => handleActivation(y.id, true)}
+                    >
+                      Aktifkan Tahun Ajaran
+                    </AlertDialogAction>
+                  </AlertDialogFooter>
+                </AlertDialogContent>
+              </AlertDialog>
             )}
           </Card>
         ))}

@@ -2,6 +2,7 @@ import { createClient } from "@/lib/supabase/server";
 import { appliesToGrade } from "@/lib/data/subjects";
 import { listAnnouncements, type AnnouncementRow } from "@/lib/data/announcements";
 import type { TeacherClassSubject } from "@/lib/data/teaching";
+import { getActiveClassIds } from "@/lib/data/active-period";
 
 export async function getStudentDashboardData(studentId: string, classId: string | null) {
   const supabase = await createClient();
@@ -188,6 +189,8 @@ export interface PrincipalDashboardData {
 
 export async function getPrincipalDashboardData(): Promise<PrincipalDashboardData> {
   const supabase = await createClient();
+  const classIds = await getActiveClassIds();
+  const activeClassIds = new Set(classIds);
 
   const [
     { data: profiles },
@@ -200,12 +203,24 @@ export async function getPrincipalDashboardData(): Promise<PrincipalDashboardDat
     recentAnnouncements,
   ] = await Promise.all([
     supabase.from("profiles").select("id, role, class_id, full_name"),
-    supabase.from("classes").select("id, name"),
+    supabase.from("classes").select("id, name").in("id", classIds),
     supabase.from("subjects").select("id, name"),
-    supabase.from("materials").select("id, teacher_id, subject_id, class_id, created_at"),
-    supabase.from("assignments").select("id, teacher_id, subject_id, class_id, kind, created_at"),
-    supabase.from("class_meetings").select("id, teacher_id, subject_id, class_id, created_at"),
-    supabase.from("submissions").select("id, assignment_id, student_id, status, submitted_at"),
+    supabase
+      .from("materials")
+      .select("id, teacher_id, subject_id, class_id, created_at")
+      .in("class_id", classIds),
+    supabase
+      .from("assignments")
+      .select("id, teacher_id, subject_id, class_id, kind, created_at")
+      .in("class_id", classIds),
+    supabase
+      .from("class_meetings")
+      .select("id, teacher_id, subject_id, class_id, created_at")
+      .in("class_id", classIds),
+    supabase
+      .from("submissions")
+      .select("id, assignment_id, student_id, status, submitted_at, assignments!inner(class_id)")
+      .in("assignments.class_id", classIds),
     listAnnouncements(3),
   ]);
 
@@ -214,6 +229,7 @@ export async function getPrincipalDashboardData(): Promise<PrincipalDashboardDat
   const studentNameById = new Map<string, string>();
   const studentCountByClass = new Map<string, number>();
   for (const p of profiles ?? []) {
+    if (p.role === "student" && !activeClassIds.has(p.class_id)) continue;
     roleCounts[p.role as keyof typeof roleCounts]++;
     if (p.role === "teacher") teacherNameById.set(p.id, p.full_name);
     if (p.role === "student") {

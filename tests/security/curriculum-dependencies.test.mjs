@@ -78,15 +78,15 @@ before(async () => {
   for (const filename of (await readdir(migrationDir))
     .filter((name) => name.endsWith(".sql"))
     .sort()) {
-    if (filename === newMigration) continue;
+    if (filename >= newMigration) continue;
     await db.exec(await readFile(new URL(filename, migrationDir), "utf8"));
   }
   await db.exec(`
     grant usage on schema public, auth to anon, authenticated, service_role;
     grant all on all tables in schema public to anon, authenticated, service_role;
     insert into public.schools (id, name) values ('${id(20)}', 'Test school');
-    insert into public.academic_years (id, school_id, year_label, semester)
-      values ('${id(30)}', '${id(20)}', '2026/2027', 'ganjil');
+    insert into public.academic_years (id, school_id, year_label, semester, is_active)
+      values ('${id(30)}', '${id(20)}', '2026/2027', 'ganjil', true);
     insert into public.classes (id, school_id, academic_year_id, name, grade_level) values
       ('${id(10)}', '${id(20)}', '${id(30)}', '4A', 4),
       ('${id(11)}', '${id(20)}', '${id(30)}', '5A', 5);
@@ -151,6 +151,11 @@ before(async () => {
   beforeMigration = await snapshot();
   await db.exec(await readFile(new URL(newMigration, migrationDir), "utf8"));
   afterMigration = await snapshot();
+  for (const filename of (await readdir(migrationDir))
+    .filter((name) => name.endsWith(".sql") && name > newMigration)
+    .sort()) {
+    await db.exec(await readFile(new URL(filename, migrationDir), "utf8"));
+  }
 });
 
 beforeEach(async () => db.exec("begin"));

@@ -1,5 +1,6 @@
 import { createServerClient } from "@supabase/ssr";
 import { NextResponse, type NextRequest } from "next/server";
+import { ACADEMIC_MAINTENANCE_PATH, isAcademicAccessOpen } from "@/lib/auth/academic-access";
 
 export async function updateSession(request: NextRequest) {
   let supabaseResponse = NextResponse.next({ request });
@@ -30,16 +31,40 @@ export async function updateSession(request: NextRequest) {
   const { pathname } = request.nextUrl;
   const isLoginRoute = pathname === "/login";
 
-  if (!user && pathname !== "/" && !isLoginRoute) {
+  function redirectTo(path: string) {
     const url = request.nextUrl.clone();
-    url.pathname = "/login";
-    return NextResponse.redirect(url);
+    url.pathname = path;
+    url.search = "";
+    const response = NextResponse.redirect(url, request.method === "POST" ? 303 : 307);
+    for (const cookie of supabaseResponse.cookies.getAll()) response.cookies.set(cookie);
+    return response;
   }
 
-  if (user && isLoginRoute) {
-    const url = request.nextUrl.clone();
-    url.pathname = "/dashboard";
-    return NextResponse.redirect(url);
+  if (!user && pathname !== "/" && !isLoginRoute) {
+    return redirectTo("/login");
+  }
+
+  if (user) {
+    const { data: profile } = await supabase
+      .from("profiles")
+      .select("role")
+      .eq("id", user.id)
+      .maybeSingle();
+    const open = profile?.role === "admin" || (await isAcademicAccessOpen(supabase));
+    if (isLoginRoute) return redirectTo(open ? "/dashboard" : ACADEMIC_MAINTENANCE_PATH);
+    if (!open && pathname !== ACADEMIC_MAINTENANCE_PATH) {
+      if (pathname.startsWith("/api/")) {
+        const response = NextResponse.json(
+          { error: "Akses ditutup sementara untuk administrasi pergantian semester." },
+          { status: 503, headers: { "Cache-Control": "no-store" } },
+        );
+        for (const cookie of supabaseResponse.cookies.getAll()) response.cookies.set(cookie);
+        return response;
+      }
+      // Server actions have their own guard in getCurrentUser. Let Next.js
+      // serialize its redirect correctly; logout must remain available too.
+      if (request.method !== "POST") return redirectTo(ACADEMIC_MAINTENANCE_PATH);
+    }
   }
 
   return supabaseResponse;
