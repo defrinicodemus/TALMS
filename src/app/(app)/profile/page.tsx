@@ -51,7 +51,7 @@ export default async function ProfilePage() {
           Pengaturan Akun
         </h3>
         <div className="mt-4 grid gap-3 sm:grid-cols-2">
-          <ChangePasswordDialog />
+          <ChangePasswordDialog isAdmin={user.role === "admin"} />
           <EditProfileDialog
             name={user.name}
             avatar={user.avatar ?? null}

@@ -1,12 +1,15 @@
 "use client";
 
-import { useState, useTransition } from "react";
+import { useRef, useState, useTransition } from "react";
+import Link from "next/link";
 import { toast } from "sonner";
 import { Trash2 } from "lucide-react";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import type { AcademicReadiness } from "@/lib/academic-readiness";
+import { getAcademicYearReadiness } from "./readiness-actions";
 import {
   Dialog,
   DialogContent,
@@ -41,11 +44,60 @@ import {
 
 type YearRow = { id: string; year_label: string; semester: string; is_active: boolean };
 
-export function YearsManager({ years }: { years: YearRow[] }) {
+export function YearsManager({
+  years,
+  classes,
+}: {
+  years: YearRow[];
+  classes: { id: string; name: string; academic_year_id: string }[];
+}) {
   const [open, setOpen] = useState(false);
   const [isPending, startTransition] = useTransition();
   const [activatingId, setActivatingId] = useState<string | null>(null);
   const activeYear = years.find((year) => year.is_active);
+  const readinessRequest = useRef(0);
+  const [readiness, setReadiness] = useState<{
+    yearId: string;
+    summary: AcademicReadiness | null;
+    error: string | null;
+  } | null>(null);
+
+  function classLinks(names: string[], yearId: string) {
+    return names.map((name, index) => {
+      const classroom = classes.find((c) => c.name === name && c.academic_year_id === yearId);
+      const params = new URLSearchParams({ year: yearId });
+      if (classroom) params.set("class", classroom.id);
+      return (
+        <span key={name}>
+          {index > 0 ? ", " : ""}
+          <Link
+            className="font-medium underline underline-offset-2"
+            href={`/master-kelas?${params}`}
+          >
+            {name}
+          </Link>
+        </span>
+      );
+    });
+  }
+
+  async function loadReadiness(yearId: string) {
+    const request = ++readinessRequest.current;
+    setReadiness({ yearId, summary: null, error: null });
+    try {
+      const result = await getAcademicYearReadiness(yearId);
+      if (request !== readinessRequest.current) return;
+      setReadiness({
+        yearId,
+        summary: result.ok ? result.summary : null,
+        error: result.ok ? null : result.message,
+      });
+    } catch {
+      if (request === readinessRequest.current) {
+        setReadiness({ yearId, summary: null, error: "Ringkasan belum dapat dimuat. Coba lagi." });
+      }
+    }
+  }
 
   function handleSubmit(formData: FormData) {
     startTransition(async () => {
@@ -100,7 +152,7 @@ export function YearsManager({ years }: { years: YearRow[] }) {
               + Tambah Tahun Ajaran
             </Button>
           </DialogTrigger>
-          <DialogContent>
+          <DialogContent dismissOnOverlayOnly>
             <DialogHeader>
               <DialogTitle>Tambah Tahun Ajaran</DialogTitle>
             </DialogHeader>
@@ -239,7 +291,12 @@ export function YearsManager({ years }: { years: YearRow[] }) {
               </AlertDialog>
             )}
             {!y.is_active && (
-              <AlertDialog>
+              <AlertDialog
+                onOpenChange={(value) => {
+                  if (value) void loadReadiness(y.id);
+                  else readinessRequest.current += 1;
+                }}
+              >
                 <AlertDialogTrigger asChild>
                   <Button
                     size="sm"
@@ -280,6 +337,67 @@ export function YearsManager({ years }: { years: YearRow[] }) {
                           Pastikan kelas, penempatan siswa, serta penugasan guru telah disiapkan
                           dengan benar.
                         </p>
+                        {readiness?.yearId === y.id && readiness.summary ? (
+                          <div className="space-y-2 border bg-muted/30 p-3">
+                            <p className="font-semibold text-foreground">
+                              Pemeriksaan sebelum aktivasi
+                            </p>
+                            <p>
+                              {readiness.summary.classCount} kelas ·{" "}
+                              {readiness.summary.studentCount} siswa ditempatkan pada periode ini.
+                            </p>
+                            {readiness.summary.classCount === 0 && (
+                              <p>Belum ada kelas pada periode ini.</p>
+                            )}
+                            {readiness.summary.emptyClasses.length > 0 && (
+                              <p>
+                                Kelas belum memiliki siswa:{" "}
+                                {classLinks(readiness.summary.emptyClasses, y.id)}.
+                              </p>
+                            )}
+                            <p>
+                              <Link
+                                href="/users?tab=siswa&placement=unplaced"
+                                className="underline underline-offset-2"
+                              >
+                                {readiness.summary.unplacedStudents} siswa belum memiliki kelas
+                              </Link>
+                              ; {readiness.summary.otherPeriodStudents} siswa berada di periode
+                              lain.
+                            </p>
+                            {readiness.summary.missingAssignments > 0 ? (
+                              <p>
+                                {readiness.summary.missingAssignments} penugasan guru-mapel belum
+                                terisi di kelas{" "}
+                                {classLinks(readiness.summary.classesMissingTeachers, y.id)}.
+                                Periksa melalui Master Kelas.
+                              </p>
+                            ) : readiness.summary.classCount > 0 ? (
+                              <p>
+                                Tidak ditemukan kekurangan penugasan guru untuk mapel yang terdaftar
+                                dan berlaku pada tingkat kelas periode ini.
+                              </p>
+                            ) : null}
+                            <p className="text-xs">
+                              Siswa di periode lain tidak selalu perlu dipindahkan, misalnya lulusan
+                              atau siswa periode berikutnya. Ringkasan ini untuk pemeriksaan admin
+                              dan tidak menghalangi aktivasi.
+                            </p>
+                          </div>
+                        ) : readiness?.yearId === y.id && readiness.error ? (
+                          <div role="status" className="space-y-2 border p-3">
+                            <p>{readiness.error}</p>
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              onClick={() => void loadReadiness(y.id)}
+                            >
+                              Muat Ulang Ringkasan
+                            </Button>
+                          </div>
+                        ) : (
+                          <p role="status">Memuat ringkasan kesiapan...</p>
+                        )}
                         <p>Tahun ajaran sebelumnya tetap tersimpan sebagai data lama.</p>
                         <p>Aktivasi tidak memindahkan siswa atau menyalin penugasan guru.</p>
                       </div>
@@ -288,7 +406,7 @@ export function YearsManager({ years }: { years: YearRow[] }) {
                   <AlertDialogFooter>
                     <AlertDialogCancel disabled={isPending}>Batal</AlertDialogCancel>
                     <AlertDialogAction
-                      disabled={isPending}
+                      disabled={isPending || readiness?.yearId !== y.id || !readiness.summary}
                       onClick={() => handleActivation(y.id, true)}
                     >
                       Aktifkan Tahun Ajaran

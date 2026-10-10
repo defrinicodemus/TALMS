@@ -13,14 +13,14 @@ const [actionCode, guardCode] = await Promise.all([
   compile("../../src/lib/auth/guard.ts"),
 ]);
 
-function setup({ role = "admin", error = null } = {}) {
+function setup({ role = "admin", error = null, data = 2 } = {}) {
   const writes = [];
   const calls = [];
   const invalidated = [];
   const client = {
     async rpc(name, params) {
       calls.push({ name, params });
-      return { error };
+      return { data, error };
     },
     from(table) {
       return {
@@ -142,4 +142,70 @@ test("deactivation uses its RPC, propagates failures, and refreshes layout only 
       assert.deepEqual(invalidated, []);
     } else assert.ok(invalidated.includes("/"));
   }
+});
+
+const transfer = {
+  kind: "promotion",
+  sourceYearId: "old-year",
+  targetYearId: "new-year",
+  mappings: [
+    { sourceClassId: "old-class", targetClassId: "new-class", studentIds: ["one", "two"] },
+  ],
+};
+
+test("student transfer uses one atomic RPC without teacher writes or activating the destination", async () => {
+  const { actions, calls, writes, invalidated } = setup();
+  const result = await actions.promoteClasses(transfer);
+  assert.equal(result.ok, true);
+  assert.match(result.message, /2 siswa/);
+  assert.match(result.message, /belum aktif/);
+  assert.deepEqual(calls, [
+    {
+      name: "transfer_academic_students",
+      params: {
+        p_kind: "promotion",
+        p_source_year_id: "old-year",
+        p_target_year_id: "new-year",
+        p_mappings: transfer.mappings,
+      },
+    },
+  ]);
+  assert.deepEqual(writes, []);
+  for (const path of ["/academic", "/master-kelas", "/users", "/dashboard"])
+    assert.ok(invalidated.includes(path));
+});
+
+test("transfer rejects non-admins and malformed requests before the RPC", async () => {
+  for (const role of ["teacher", "student", "principal", null]) {
+    const { actions, calls } = setup({ role });
+    assert.equal((await actions.promoteClasses(transfer)).ok, false);
+    assert.deepEqual(calls, []);
+  }
+  const { actions, calls } = setup();
+  for (const input of [
+    null,
+    [],
+    {},
+    { ...transfer, kind: "unknown" },
+    { ...transfer, targetYearId: "old-year" },
+    { ...transfer, mappings: [] },
+    { ...transfer, mappings: [null] },
+    { ...transfer, mappings: [{ ...transfer.mappings[0], studentIds: [] }] },
+  ]) {
+    assert.equal((await actions.promoteClasses(input)).ok, false);
+  }
+  assert.deepEqual(calls, []);
+});
+
+test("RPC failure returns a transfer error without fallback writes or success invalidation", async () => {
+  const { actions, calls, writes, invalidated } = setup({
+    error: { message: "Periode masih aktif" },
+  });
+  assert.deepEqual(await actions.promoteClasses(transfer), {
+    ok: false,
+    message: "Periode masih aktif",
+  });
+  assert.equal(calls.length, 1);
+  assert.deepEqual(writes, []);
+  assert.deepEqual(invalidated, []);
 });

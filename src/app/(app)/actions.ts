@@ -6,7 +6,8 @@ import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { getCurrentUser } from "@/lib/data/profile";
 import { assertRole } from "@/lib/auth/guard";
-import { validateFileUpload } from "@/lib/validateUpload";
+import { SCHOOL_LOGO_UPLOAD, validateFileUpload } from "@/lib/validateUpload";
+import type { StudentTransfer } from "@/lib/academic-transfers";
 
 export async function logout() {
   const supabase = await createClient();
@@ -134,58 +135,133 @@ export async function saveSchoolSettings(
   const phone = String(formData.get("phone") ?? "").trim();
   if (!name) return { ok: false, message: "Nama sekolah wajib diisi." };
 
-  const supabase = await createClient();
-  const { data: school } = await supabase.from("schools").select("id").limit(1).single();
-  if (!school) return { ok: false, message: "Data sekolah tidak ditemukan." };
+  try {
+    const supabase = await createClient();
+    const { data: school, error: readError } = await supabase
+      .from("schools")
+      .select("id")
+      .limit(1)
+      .maybeSingle();
+    if (readError) return { ok: false, message: "Data sekolah gagal diperiksa. Coba lagi." };
+    if (!school) return { ok: false, message: "Data sekolah tidak ditemukan." };
 
-  const { error } = await supabase
-    .from("schools")
-    .update({ name, address, phone })
-    .eq("id", school.id);
-  if (error) return { ok: false, message: error.message };
+    const { data: saved, error } = await supabase
+      .from("schools")
+      .update({ name, address, phone })
+      .eq("id", school.id)
+      .select("id")
+      .maybeSingle();
+    if (error) return { ok: false, message: error.message };
+    if (!saved)
+      return { ok: false, message: "Profil sekolah belum tersimpan. Muat ulang dan coba lagi." };
+  } catch {
+    return {
+      ok: false,
+      message:
+        "Hasil penyimpanan belum dapat dipastikan. Muat ulang dan periksa profil sekolah sebelum mencoba kembali.",
+    };
+  }
 
-  revalidatePath("/settings");
+  revalidatePath("/", "layout");
   return { ok: true, message: "Profil sekolah berhasil disimpan." };
 }
 
 export async function uploadSchoolLogo(
   formData: FormData,
-): Promise<{ ok: boolean; message: string }> {
+): Promise<{ ok: boolean; message: string; logoUrl?: string }> {
   const currentUser = await getCurrentUser();
   const roleError = assertRole(currentUser, ["admin"]);
   if (roleError) return roleError;
 
-  const file = formData.get("logo") as File | null;
-  if (!file || file.size === 0) return { ok: false, message: "Pilih file logo dulu." };
+  const file = formData.get("logo");
+  if (!(file instanceof File) || file.size === 0)
+    return { ok: false, message: "Pilih file logo dulu." };
 
-  const validation = validateFileUpload(file, {
-    allowedTypes: ["image/png", "image/jpeg", "image/webp", "image/svg+xml"],
-    maxSizeMB: 2,
-  });
+  const validation = validateFileUpload(file, SCHOOL_LOGO_UPLOAD);
   if (!validation.ok) return validation;
 
-  const supabase = await createClient();
-  const { data: school } = await supabase.from("schools").select("id").limit(1).single();
-  if (!school) return { ok: false, message: "Data sekolah tidak ditemukan." };
+  try {
+    const supabase = await createClient();
+    const { data: school, error: readError } = await supabase
+      .from("schools")
+      .select("id, logo_url")
+      .limit(1)
+      .maybeSingle();
+    if (readError) return { ok: false, message: "Data sekolah gagal diperiksa. Coba lagi." };
+    if (!school) return { ok: false, message: "Data sekolah tidak ditemukan." };
 
-  const ext = file.name.split(".").pop() || "png";
-  const path = `logo/${Date.now()}.${ext}`;
+    const extensions: Record<string, string> = {
+      "image/png": "png",
+      "image/jpeg": "jpg",
+      "image/webp": "webp",
+      "image/svg+xml": "svg",
+    };
+    const path = `logo/${school.id}/${crypto.randomUUID()}.${extensions[file.type]}`;
+    const storage = createAdminClient().storage.from("school-assets");
+    const { error: uploadError } = await storage.upload(path, file, {
+      contentType: file.type,
+      upsert: false,
+    });
+    if (uploadError) return { ok: false, message: uploadError.message };
+    const {
+      data: { publicUrl },
+    } = storage.getPublicUrl(path);
 
-  const admin = createAdminClient();
-  const { error: uploadError } = await admin.storage
-    .from("school-assets")
-    .upload(path, file, { contentType: file.type, upsert: true });
-  if (uploadError) return { ok: false, message: uploadError.message };
+    let saved = false;
+    let failureMessage = "Logo telah berubah. Muat ulang sebelum menggantinya kembali.";
+    try {
+      let update = supabase.from("schools").update({ logo_url: publicUrl }).eq("id", school.id);
+      update =
+        school.logo_url === null
+          ? update.is("logo_url", null)
+          : update.eq("logo_url", school.logo_url);
+      const result = await update.select("id").maybeSingle();
+      saved = !result.error && Boolean(result.data);
+      if (result.error) failureMessage = result.error.message;
+    } catch {
+      failureMessage = "Koneksi terputus saat menyimpan logo.";
+    }
 
-  const {
-    data: { publicUrl },
-  } = admin.storage.from("school-assets").getPublicUrl(path);
+    if (!saved) {
+      // A lost response can follow a committed update. Never delete the new
+      // object until we know it is not the school's saved logo.
+      const { data: current, error: verifyError } = await supabase
+        .from("schools")
+        .select("logo_url")
+        .eq("id", school.id)
+        .maybeSingle();
+      if (verifyError || !current) {
+        return {
+          ok: false,
+          message:
+            "Status logo belum dapat dipastikan. Muat ulang dan periksa logo sebelum mencoba kembali.",
+        };
+      }
+      saved = current.logo_url === publicUrl;
+      if (!saved) {
+        let cleaned = false;
+        try {
+          const { error: cleanupError } = await storage.remove([path]);
+          cleaned = !cleanupError;
+        } catch {
+          /* Report incomplete cleanup without touching the previous logo. */
+        }
+        return {
+          ok: false,
+          message: `Logo belum tersimpan. ${failureMessage}${cleaned ? "" : " File unggahan sementara belum dapat dibersihkan."}`,
+        };
+      }
+    }
 
-  await supabase.from("schools").update({ logo_url: publicUrl }).eq("id", school.id);
-  revalidatePath("/settings");
-  revalidatePath("/login");
-
-  return { ok: true, message: "Logo sekolah berhasil diperbarui." };
+    revalidatePath("/", "layout");
+    return { ok: true, message: "Logo sekolah berhasil diperbarui.", logoUrl: publicUrl };
+  } catch {
+    return {
+      ok: false,
+      message:
+        "Status unggahan belum dapat dipastikan. Muat ulang dan periksa logo sebelum mencoba kembali.",
+    };
+  }
 }
 
 export async function createClass(formData: FormData): Promise<{ ok: boolean; message: string }> {
@@ -513,12 +589,33 @@ export async function assignStudentToClass(
   const classId = String(formData.get("class_id") ?? "");
   if (!studentId) return { ok: false, message: "Siswa tidak valid." };
 
+  if (!formData.has("expected_class_id")) {
+    return { ok: false, message: "Muat ulang halaman untuk memeriksa penempatan siswa terbaru." };
+  }
+  const previousClassId = String(formData.get("expected_class_id") ?? "");
+  if (
+    classId &&
+    previousClassId &&
+    classId !== previousClassId &&
+    formData.get("confirm_move") !== "true"
+  ) {
+    return { ok: false, message: "Konfirmasikan perpindahan siswa dari kelas sebelumnya." };
+  }
+
   const supabase = await createClient();
-  const { error } = await supabase
+  let update = supabase
     .from("profiles")
     .update({ class_id: classId || null })
-    .eq("id", studentId);
+    .eq("id", studentId)
+    .eq("role", "student");
+  update = previousClassId ? update.eq("class_id", previousClassId) : update.is("class_id", null);
+  const { data: saved, error } = await update.select("id").maybeSingle();
   if (error) return { ok: false, message: error.message };
+  if (!saved)
+    return {
+      ok: false,
+      message: "Penempatan siswa telah berubah atau siswa tidak ditemukan. Muat ulang halaman.",
+    };
 
   revalidatePath("/master-kelas");
   revalidatePath("/users");
@@ -529,53 +626,42 @@ export async function assignStudentToClass(
 }
 
 export async function promoteClasses(
-  mappings: { sourceClassId: string; targetClassId: string; studentIds: string[] }[],
+  input: StudentTransfer,
 ): Promise<{ ok: boolean; message: string }> {
-  if (mappings.length === 0) {
-    return { ok: false, message: "Pilih minimal satu pemetaan kelas." };
-  }
-
-  const currentUser = await getCurrentUser();
-  if (!currentUser || currentUser.role !== "admin") {
-    return { ok: false, message: "Tidak diizinkan." };
+  const roleError = assertRole(await getCurrentUser(), ["admin"]);
+  if (roleError) return roleError;
+  if (
+    !input ||
+    !["semester", "promotion"].includes(input.kind) ||
+    !input.sourceYearId ||
+    !input.targetYearId ||
+    input.sourceYearId === input.targetYearId ||
+    !Array.isArray(input.mappings) ||
+    input.mappings.length === 0 ||
+    input.mappings.some(
+      (m) =>
+        !m?.sourceClassId ||
+        !m.targetClassId ||
+        !Array.isArray(m.studentIds) ||
+        m.studentIds.length === 0,
+    )
+  ) {
+    return {
+      ok: false,
+      message: "Pilih periode, kelas tujuan, dan minimal satu siswa yang valid.",
+    };
   }
 
   const supabase = await createClient();
-  let studentsMoved = 0;
-  let assignmentsCopied = 0;
-
-  for (const { sourceClassId, targetClassId, studentIds } of mappings) {
-    const uniqueStudentIds = [...new Set(studentIds)].filter(Boolean);
-    if (uniqueStudentIds.length > 0) {
-      const { data: movedStudents, error: moveError } = await supabase
-        .from("profiles")
-        .update({ class_id: targetClassId })
-        .eq("role", "student")
-        .eq("class_id", sourceClassId)
-        .in("id", uniqueStudentIds)
-        .select("id");
-
-      if (moveError) return { ok: false, message: moveError.message };
-      studentsMoved += movedStudents?.length ?? 0;
-    }
-
-    const { data: assignments } = await supabase
-      .from("class_teacher_subjects")
-      .select("subject_id, teacher_id")
-      .eq("class_id", sourceClassId);
-
-    if (assignments && assignments.length > 0) {
-      const rows = assignments.map((a) => ({
-        class_id: targetClassId,
-        subject_id: a.subject_id,
-        teacher_id: a.teacher_id,
-      }));
-      await supabase
-        .from("class_teacher_subjects")
-        .upsert(rows, { onConflict: "class_id,subject_id" });
-      assignmentsCopied += rows.length;
-    }
-  }
+  // The RPC checks the school's administration mode and all placements under
+  // the same lock used for activation, then commits every move atomically.
+  const { data: studentsMoved, error } = await supabase.rpc("transfer_academic_students", {
+    p_kind: input.kind,
+    p_source_year_id: input.sourceYearId,
+    p_target_year_id: input.targetYearId,
+    p_mappings: input.mappings,
+  });
+  if (error) return { ok: false, message: error.message };
 
   revalidatePath("/academic");
   revalidatePath("/master-kelas");
@@ -584,7 +670,7 @@ export async function promoteClasses(
 
   return {
     ok: true,
-    message: `${studentsMoved} siswa dan ${assignmentsCopied} penugasan guru berhasil dipindahkan ke kelas baru.`,
+    message: `${studentsMoved} siswa berhasil dipindahkan. Periode tujuan tetap belum aktif.`,
   };
 }
 

@@ -38,6 +38,7 @@ import {
   AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
 import { setClassSubjectTeacher, assignStudentToClass } from "../actions";
+import { useAdminFilters } from "@/hooks/use-admin-filters";
 
 type ClassOption = AcademicClassOption & { grade_level: number; label: string };
 type Subject = {
@@ -80,16 +81,22 @@ export function MasterKelasManager({
   assignments: Assignment[];
   students: Student[];
 }) {
-  const [selectedYearId, setYearId] = useState(years[0]?.id ?? "");
+  const { params, setFilters } = useAdminFilters();
+  const selectedYearId = params.get("year") ?? "";
   const yearId = years.some((year) => year.id === selectedYearId)
     ? selectedYearId
     : (years[0]?.id ?? "");
   const availableClasses = classes.filter((c) => c.academicYearId === yearId);
-  const [selectedClassId, setClassId] = useState(availableClasses[0]?.id ?? "");
+  const selectedClassId = params.get("class");
   const classId =
     availableClasses.find((c) => c.id === selectedClassId)?.id ?? availableClasses[0]?.id ?? "";
   const [isPending, startTransition] = useTransition();
   const [pickerOpen, setPickerOpen] = useState(false);
+  const [pendingMove, setPendingMove] = useState<{
+    student: Student;
+    targetId: string;
+    targetLabel: string;
+  } | null>(null);
 
   const teacherBySubject = useMemo(() => {
     const m = new Map<string, string>();
@@ -128,24 +135,37 @@ export function MasterKelasManager({
 
   function handleAddStudent(studentId: string) {
     setPickerOpen(false);
+    const student = students.find((s) => s.id === studentId);
+    if (!student || !selectedClass) return;
+    if (student.classId) {
+      setPendingMove({ student, targetId: classId, targetLabel: selectedClassName });
+    } else {
+      savePlacement(student, classId);
+    }
+  }
+
+  function savePlacement(student: Student, targetId: string, confirmed = false) {
     startTransition(async () => {
-      const formData = new FormData();
-      formData.set("student_id", studentId);
-      formData.set("class_id", classId);
-      const result = await assignStudentToClass(formData);
-      if (result.ok) toast.success(result.message);
-      else toast.error(result.message);
+      try {
+        const formData = new FormData();
+        formData.set("student_id", student.id);
+        formData.set("class_id", targetId);
+        formData.set("expected_class_id", student.classId ?? "");
+        if (confirmed) formData.set("confirm_move", "true");
+        const result = await assignStudentToClass(formData);
+        if (result.ok) {
+          toast.success(result.message);
+          setPendingMove(null);
+        } else toast.error(result.message);
+      } catch {
+        toast.error("Penempatan belum dapat dipastikan. Muat ulang dan periksa kelas siswa.");
+      }
     });
   }
 
   function handleRemoveStudent(studentId: string) {
-    startTransition(async () => {
-      const formData = new FormData();
-      formData.set("student_id", studentId);
-      const result = await assignStudentToClass(formData);
-      if (result.ok) toast.success(result.message);
-      else toast.error(result.message);
-    });
+    const student = students.find((s) => s.id === studentId);
+    if (student) savePlacement(student, "");
   }
 
   return (
@@ -157,13 +177,17 @@ export function MasterKelasManager({
           yearId={yearId}
           classId={classId}
           onYearChange={(nextYearId) => {
-            setYearId(nextYearId);
-            setClassId(classes.find((c) => c.academicYearId === nextYearId)?.id ?? "");
+            setFilters({
+              year: nextYearId,
+              class: classes.find((c) => c.academicYearId === nextYearId)?.id ?? null,
+            });
             setPickerOpen(false);
+            setPendingMove(null);
           }}
           onClassChange={(nextClassId) => {
-            setClassId(nextClassId);
+            setFilters({ year: yearId, class: nextClassId });
             setPickerOpen(false);
+            setPendingMove(null);
           }}
           disabled={isPending}
           className="max-w-xl"
@@ -235,19 +259,25 @@ export function MasterKelasManager({
                 </PopoverTrigger>
                 <PopoverContent className="w-72 p-0" align="end">
                   <Command>
-                    <CommandInput placeholder="Cari nama siswa..." />
+                    <CommandInput placeholder="Cari nama atau NISN siswa..." />
                     <CommandList>
                       <CommandEmpty>Tidak ditemukan.</CommandEmpty>
                       <CommandGroup>
                         {studentsOutside.map((s) => (
                           <CommandItem
                             key={s.id}
-                            value={`${s.name}-${s.id}`}
+                            value={s.id}
+                            keywords={[s.name, s.nisn ?? ""]}
                             onSelect={() => handleAddStudent(s.id)}
                           >
-                            <span>{s.name}</span>
-                            <span className="ml-auto text-xs text-muted-foreground">
-                              {s.className ?? "Belum ada kelas"}
+                            <span className="min-w-0 space-y-1">
+                              <span className="block font-medium">{s.name}</span>
+                              <span className="block text-xs text-muted-foreground">
+                                NISN: {s.nisn ?? "-"}
+                              </span>
+                              <span className="block text-xs text-muted-foreground">
+                                {s.className ?? "Belum ada kelas"}
+                              </span>
                             </span>
                           </CommandItem>
                         ))}
@@ -304,6 +334,35 @@ export function MasterKelasManager({
           </Card>
         </div>
       )}
+      <AlertDialog
+        open={Boolean(pendingMove)}
+        onOpenChange={(value) => {
+          if (!value && !isPending) setPendingMove(null);
+        }}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Pindahkan siswa ke kelas lain?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Pindahkan {pendingMove?.student.name} (NISN: {pendingMove?.student.nisn ?? "-"}) dari{" "}
+              {pendingMove?.student.className ?? "kelas sebelumnya"} ke {pendingMove?.targetLabel}?
+              Penempatan kelas sebelumnya akan diganti.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={isPending}>Batal</AlertDialogCancel>
+            <AlertDialogAction
+              disabled={isPending}
+              onClick={(event) => {
+                event.preventDefault();
+                if (pendingMove) savePlacement(pendingMove.student, pendingMove.targetId, true);
+              }}
+            >
+              {isPending ? "Memindahkan..." : "Pindahkan Siswa"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }

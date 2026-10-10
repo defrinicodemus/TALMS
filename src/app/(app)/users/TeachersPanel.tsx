@@ -26,7 +26,7 @@ import {
 } from "@/components/ui/alert-dialog";
 import { createTeacher, updateStaff, deleteTeacher } from "./actions";
 
-type Teaching = { className: string; subjectName: string };
+type Teaching = { className: string; subjectName: string; periodLabel: string; isActive: boolean };
 type Teacher = {
   id: string;
   name: string;
@@ -39,10 +39,11 @@ type Teacher = {
 const MAX_BADGES = 3;
 
 function TeachingBadges({ teaching }: { teaching: Teaching[] }) {
+  const [expanded, setExpanded] = useState(false);
   if (teaching.length === 0) {
     return <span className="text-xs text-muted-foreground">Belum ada penugasan</span>;
   }
-  const shown = teaching.slice(0, MAX_BADGES);
+  const shown = expanded ? teaching : teaching.slice(0, MAX_BADGES);
   const rest = teaching.length - shown.length;
   return (
     <div className="flex flex-wrap gap-1">
@@ -51,13 +52,19 @@ function TeachingBadges({ teaching }: { teaching: Teaching[] }) {
           key={i}
           className="rounded-full bg-primary-soft/40 px-2 py-0.5 text-xs font-medium text-primary"
         >
-          {t.className} · {t.subjectName}
+          {t.className} · {t.subjectName} · {t.periodLabel}
+          {t.isActive ? " · Aktif" : ""}
         </span>
       ))}
-      {rest > 0 && (
-        <span className="rounded-full bg-muted px-2 py-0.5 text-xs text-muted-foreground">
-          +{rest} lainnya
-        </span>
+      {teaching.length > MAX_BADGES && (
+        <button
+          type="button"
+          aria-expanded={expanded}
+          onClick={() => setExpanded((value) => !value)}
+          className="rounded-full bg-muted px-2 py-0.5 text-xs text-muted-foreground hover:text-foreground"
+        >
+          {expanded ? "Ringkas" : `+${rest} lainnya`}
+        </button>
       )}
     </div>
   );
@@ -89,12 +96,18 @@ export function TeachersPanel({ teachers }: { teachers: Teacher[] }) {
 
   function handleSubmit(formData: FormData) {
     startTransition(async () => {
-      const result = editing ? await updateStaff(formData) : await createTeacher(formData);
-      if (result.ok) {
-        toast.success(result.message);
-        setOpen(false);
-      } else {
-        toast.error(result.message);
+      try {
+        const result = editing ? await updateStaff(formData) : await createTeacher(formData);
+        if (result.ok) {
+          toast.success(result.message);
+          setOpen(false);
+        } else {
+          toast.error(result.message);
+        }
+      } catch {
+        toast.error(
+          "Hasil penyimpanan belum dapat dipastikan. Periksa data sebelum mencoba kembali.",
+        );
       }
     });
   }
@@ -119,6 +132,7 @@ export function TeachersPanel({ teachers }: { teachers: Teacher[] }) {
         <Dialog
           open={open}
           onOpenChange={(v) => {
+            if (isPending) return;
             setOpen(v);
             if (!v) setEditing(null);
           }}
@@ -128,11 +142,17 @@ export function TeachersPanel({ teachers }: { teachers: Teacher[] }) {
               + Tambah Guru
             </Button>
           </DialogTrigger>
-          <DialogContent>
+          <DialogContent dismissOnOverlayOnly>
             <DialogHeader>
               <DialogTitle>{editing ? "Edit Guru" : "Tambah Guru"}</DialogTitle>
             </DialogHeader>
-            <form action={handleSubmit} className="space-y-3">
+            <form
+              onSubmit={(event) => {
+                event.preventDefault();
+                if (!isPending) handleSubmit(new FormData(event.currentTarget));
+              }}
+              className="space-y-3"
+            >
               {editing && <input type="hidden" name="id" value={editing.id} />}
               <div>
                 <Label>Nama</Label>
@@ -210,7 +230,7 @@ export function TeachersPanel({ teachers }: { teachers: Teacher[] }) {
             <tr>
               <th className="px-4 py-3">Nama</th>
               <th className="px-4 py-3">NIP</th>
-              <th className="px-4 py-3">Mata Pelajaran</th>
+              <th className="px-4 py-3">Penugasan Mengajar</th>
               <th className="px-4 py-3">Aksi</th>
             </tr>
           </thead>

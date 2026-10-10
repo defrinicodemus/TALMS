@@ -15,7 +15,7 @@ import { PrincipalDashboard } from "@/components/dashboards/PrincipalDashboard";
 import { AdminDashboard } from "@/components/dashboards/AdminDashboard";
 import { PageEntranceAnimation } from "@/components/PageEntranceAnimation";
 
-export const metadata: Metadata = { title: "Beranda — LMS Nggodimeda" };
+export const metadata: Metadata = { title: "Beranda" };
 
 export default async function DashboardPage() {
   const user = await getCurrentUser();

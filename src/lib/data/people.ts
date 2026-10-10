@@ -40,18 +40,37 @@ export async function listTeachersWithStats() {
     .order("full_name");
 
   const [{ data: cts }, { data: materials }, { data: assignments }] = await Promise.all([
-    supabase.from("class_teacher_subjects").select("teacher_id, subjects(name), classes(name)"),
+    supabase
+      .from("class_teacher_subjects")
+      .select(
+        "teacher_id, subjects(name), classes(name, academic_years(year_label, semester, is_active))",
+      ),
     supabase.from("materials").select("teacher_id"),
     supabase.from("assignments").select("teacher_id"),
   ]);
 
-  const teachingByTeacher = new Map<string, { className: string; subjectName: string }[]>();
+  const teachingByTeacher = new Map<
+    string,
+    { className: string; subjectName: string; periodLabel: string; isActive: boolean }[]
+  >();
   for (const row of cts ?? []) {
     const subjectName = (row.subjects as unknown as { name: string } | null)?.name;
-    const className = (row.classes as unknown as { name: string } | null)?.name;
+    const classroom = row.classes as unknown as {
+      name: string;
+      academic_years: { year_label: string; semester: string; is_active: boolean } | null;
+    } | null;
+    const className = classroom?.name;
     if (!subjectName || !className) continue;
     const list = teachingByTeacher.get(row.teacher_id) ?? [];
-    list.push({ className, subjectName });
+    const year = classroom?.academic_years;
+    list.push({
+      className,
+      subjectName,
+      periodLabel: year
+        ? `${year.year_label} · ${year.semester === "ganjil" ? "Ganjil" : "Genap"}`
+        : "Periode tidak diketahui",
+      isActive: year?.is_active ?? false,
+    });
     teachingByTeacher.set(row.teacher_id, list);
   }
   const countBy = (rows: { teacher_id: string | null }[] | null | undefined) => {
@@ -66,7 +85,12 @@ export async function listTeachersWithStats() {
   const assignmentCount = countBy(assignments);
 
   return (teachers ?? []).map((t) => {
-    const teaching = teachingByTeacher.get(t.id) ?? [];
+    const teaching = (teachingByTeacher.get(t.id) ?? []).sort(
+      (a, b) =>
+        Number(b.isActive) - Number(a.isActive) ||
+        b.periodLabel.localeCompare(a.periodLabel) ||
+        a.className.localeCompare(b.className),
+    );
     return {
       id: t.id,
       name: t.full_name,
@@ -100,7 +124,7 @@ export async function listAllUsersForReset() {
     id: p.id,
     name: p.full_name,
     role: p.role as string,
-    identifier: (p.nisn ?? p.nip) as string | null,
+    identifier: p.nisn?.trim() || p.nip?.trim() || null,
   }));
 }
 

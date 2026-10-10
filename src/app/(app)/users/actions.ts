@@ -16,6 +16,100 @@ function friendlyAuthError(message: string, label: string): string {
     : message;
 }
 
+// Auth and public.profiles cannot share a transaction through these APIs.
+// Check both writes and compensate an Auth change if the profile write fails.
+async function updateAccountIdentity(
+  id: string,
+  values: Record<string, string | null>,
+  allowedRoles: string[],
+  identifierLabel: string,
+): Promise<Result> {
+  const uncertain = {
+    ok: false,
+    message:
+      "Penyimpanan belum dapat dipastikan atau dipulihkan sepenuhnya. Muat ulang dan periksa identitas login serta data pengguna sebelum mencoba kembali.",
+  };
+  try {
+    const supabase = await createClient();
+    const { data: previous, error: readError } = await supabase
+      .from("profiles")
+      .select("id, role, full_name, username, nisn, nip, class_id, updated_at")
+      .eq("id", id)
+      .maybeSingle();
+    if (readError) return { ok: false, message: "Data pengguna gagal diperiksa. Coba lagi." };
+    if (!previous || !allowedRoles.includes(previous.role)) {
+      return { ok: false, message: "Pengguna tidak ditemukan atau jenis akun tidak sesuai." };
+    }
+
+    const admin = createAdminClient();
+    const { data: authData, error: authReadError } = await admin.auth.admin.getUserById(id);
+    const oldEmail = authData?.user?.email;
+    if (authReadError || !oldEmail) {
+      return {
+        ok: false,
+        message: "Identitas login gagal diperiksa. Belum ada perubahan disimpan.",
+      };
+    }
+    const newEmail = `${values.username}@${EMAIL_DOMAIN}`;
+    const changedEmail = oldEmail !== newEmail;
+    if (changedEmail) {
+      const { error } = await admin.auth.admin.updateUserById(id, { email: newEmail });
+      if (error) return { ok: false, message: friendlyAuthError(error.message, identifierLabel) };
+    }
+
+    let failureMessage = "Data pengguna telah berubah. Muat ulang sebelum menyimpan kembali.";
+    try {
+      const { data: saved, error } = await supabase
+        .from("profiles")
+        .update(values)
+        .eq("id", id)
+        .eq("updated_at", previous.updated_at)
+        .select("id")
+        .maybeSingle();
+      if (!error && saved) return { ok: true, message: "Data berhasil diperbarui." };
+      if (error) failureMessage = error.message;
+    } catch {
+      failureMessage = "Koneksi terputus saat menyimpan data pengguna.";
+    }
+
+    // A failed response can arrive after a committed write. Read back before
+    // rolling back so we never knowingly undo Auth for an already-saved profile.
+    const { data: current, error: verifyError } = await supabase
+      .from("profiles")
+      .select("full_name, username, nisn, nip, class_id")
+      .eq("id", id)
+      .maybeSingle();
+    if (verifyError || !current) return uncertain;
+    const { data: currentAuth, error: verifyAuthError } = await admin.auth.admin.getUserById(id);
+    if (verifyAuthError || !currentAuth?.user?.email) return uncertain;
+    if (
+      Object.entries(values).every(
+        ([key, value]) => current[key as keyof typeof current] === value,
+      ) &&
+      currentAuth.user.email === newEmail
+    ) {
+      return { ok: true, message: "Data berhasil diperbarui." };
+    }
+
+    if (changedEmail) {
+      // Do not overwrite another administrator's concurrent identity change.
+      if (current.username !== previous.username) return uncertain;
+      if (currentAuth.user.email === newEmail) {
+        const { error: rollbackError } = await admin.auth.admin.updateUserById(id, {
+          email: oldEmail,
+        });
+        if (rollbackError) return uncertain;
+      } else if (currentAuth.user.email !== oldEmail) return uncertain;
+    }
+    return {
+      ok: false,
+      message: `Data belum berhasil disimpan. ${failureMessage}${changedEmail ? " Identitas login telah dikembalikan seperti sebelumnya." : ""}`,
+    };
+  } catch {
+    return uncertain;
+  }
+}
+
 export async function createStudent(formData: FormData): Promise<Result> {
   const currentUser = await getCurrentUser();
   const roleError = assertRole(currentUser, ["admin"]);
@@ -65,17 +159,13 @@ export async function updateStudent(formData: FormData): Promise<Result> {
   const classId = String(formData.get("class_id") ?? "");
   if (!id || !name || !nisn) return { ok: false, message: "Nama dan NISN wajib diisi." };
 
-  const admin = createAdminClient();
-  const { error: authError } = await admin.auth.admin.updateUserById(id, {
-    email: `${nisn}@${EMAIL_DOMAIN}`,
-  });
-  if (authError) return { ok: false, message: friendlyAuthError(authError.message, "NISN") };
-
-  const supabase = await createClient();
-  await supabase
-    .from("profiles")
-    .update({ full_name: name, username: nisn, nisn, class_id: classId || null })
-    .eq("id", id);
+  const result = await updateAccountIdentity(
+    id,
+    { full_name: name, username: nisn, nisn, class_id: classId || null },
+    ["student"],
+    "NISN",
+  );
+  if (!result.ok) return result;
 
   revalidatePath("/users");
   revalidatePath("/master-kelas");
@@ -179,16 +269,16 @@ export async function updateStaff(formData: FormData): Promise<Result> {
   const nip = String(formData.get("nip") ?? "").trim();
   if (!id || !name || !nip) return { ok: false, message: "Nama dan NIP wajib diisi." };
 
-  const admin = createAdminClient();
-  const { error: authError } = await admin.auth.admin.updateUserById(id, {
-    email: `${nip}@${EMAIL_DOMAIN}`,
-  });
-  if (authError) return { ok: false, message: friendlyAuthError(authError.message, "NIP") };
-
-  const supabase = await createClient();
-  await supabase.from("profiles").update({ full_name: name, username: nip, nip }).eq("id", id);
+  const result = await updateAccountIdentity(
+    id,
+    { full_name: name, username: nip, nip },
+    ["teacher", "principal"],
+    "NIP",
+  );
+  if (!result.ok) return result;
 
   revalidatePath("/users");
+  revalidatePath("/master-kelas");
   return { ok: true, message: "Data berhasil diperbarui." };
 }
 
@@ -222,28 +312,44 @@ export async function resetPasswordToDefault(id: string): Promise<Result> {
   const roleError = assertRole(currentUser, ["admin"]);
   if (roleError) return roleError;
 
-  const supabase = await createClient();
-  const { data: profile } = await supabase
-    .from("profiles")
-    .select("full_name, nisn, nip")
-    .eq("id", id)
-    .single();
-  if (!profile) return { ok: false, message: "Pengguna tidak ditemukan." };
+  if (!id.trim()) return { ok: false, message: "Pilih pengguna yang akan direset." };
+  try {
+    const supabase = await createClient();
+    const { data: profile, error: readError } = await supabase
+      .from("profiles")
+      .select("full_name, nisn, nip")
+      .eq("id", id)
+      .maybeSingle();
+    if (readError) return { ok: false, message: "Data pengguna gagal diperiksa. Coba lagi." };
+    if (!profile) return { ok: false, message: "Pengguna tidak ditemukan." };
 
-  const defaultPassword = profile.nisn ?? profile.nip;
-  if (!defaultPassword) {
+    const defaultPassword = profile.nisn?.trim() || profile.nip?.trim();
+    if (!defaultPassword) {
+      return {
+        ok: false,
+        message: "Pengguna ini tidak punya NISN/NIP, tidak bisa direset otomatis.",
+      };
+    }
+
+    const admin = createAdminClient();
+    const { data, error } = await admin.auth.admin.updateUserById(id, {
+      password: defaultPassword,
+    });
+    if (error) return { ok: false, message: error.message };
+    if (!data?.user)
+      return {
+        ok: false,
+        message: "Hasil reset belum dapat dipastikan. Periksa akun sebelum mencoba kembali.",
+      };
+
+    return {
+      ok: true,
+      message: `Password ${profile.full_name} berhasil direset ke NISN/NIP. Minta pengguna segera mengganti password setelah masuk.`,
+    };
+  } catch {
     return {
       ok: false,
-      message: "Pengguna ini tidak punya NISN/NIP, tidak bisa direset otomatis.",
+      message: "Hasil reset belum dapat dipastikan. Periksa akun sebelum mencoba kembali.",
     };
   }
-
-  const admin = createAdminClient();
-  const { error } = await admin.auth.admin.updateUserById(id, { password: defaultPassword });
-  if (error) return { ok: false, message: error.message };
-
-  return {
-    ok: true,
-    message: `Password ${profile.full_name} direset ke ${defaultPassword}.`,
-  };
 }

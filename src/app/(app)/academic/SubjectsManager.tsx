@@ -130,7 +130,7 @@ export function SubjectsManager({ subjects }: { subjects: SubjectRow[] }) {
               + Tambah Mapel
             </Button>
           </DialogTrigger>
-          <DialogContent>
+          <DialogContent dismissOnOverlayOnly>
             <DialogHeader>
               <DialogTitle>{editing ? "Edit Mata Pelajaran" : "Tambah Mata Pelajaran"}</DialogTitle>
             </DialogHeader>

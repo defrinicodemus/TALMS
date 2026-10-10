@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState, useTransition } from "react";
+import { useMemo, useRef, useState, useTransition } from "react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -13,34 +13,51 @@ import {
   AlertDialogFooter,
   AlertDialogHeader,
   AlertDialogTitle,
-  AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
 import { resetPasswordToDefault } from "../users/actions";
 
 type UserRow = { id: string; name: string; role: string; identifier: string | null };
+const ROLE_LABELS: Record<string, string> = {
+  student: "Siswa",
+  teacher: "Guru",
+  principal: "Kepala Sekolah",
+  admin: "Admin",
+};
 
 export function ResetPasswordPanel({ users }: { users: UserRow[] }) {
   const [query, setQuery] = useState("");
   const [isPending, startTransition] = useTransition();
-  const [resettingId, setResettingId] = useState<string | null>(null);
+  const [selectedUser, setSelectedUser] = useState<UserRow | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const submitting = useRef(false);
 
   const results = useMemo(() => {
     const q = query.trim().toLowerCase();
     if (!q) return [];
-    return users
-      .filter(
-        (u) => u.name.toLowerCase().includes(q) || (u.identifier ?? "").toLowerCase().includes(q),
-      )
-      .slice(0, 8);
+    return users.filter(
+      (u) => u.name.toLowerCase().includes(q) || (u.identifier ?? "").toLowerCase().includes(q),
+    );
   }, [users, query]);
 
   function handleReset(u: UserRow) {
-    setResettingId(u.id);
+    if (submitting.current || !u.identifier?.trim()) return;
+    submitting.current = true;
+    setError(null);
     startTransition(async () => {
-      const result = await resetPasswordToDefault(u.id);
-      if (result.ok) toast.success(result.message);
-      else toast.error(result.message);
-      setResettingId(null);
+      try {
+        const result = await resetPasswordToDefault(u.id);
+        if (result.ok) {
+          toast.success(result.message);
+          setSelectedUser(null);
+        } else {
+          setError(result.message);
+          toast.error(result.message);
+        }
+      } catch {
+        setError("Hasil reset belum dapat dipastikan. Periksa akun sebelum mencoba kembali.");
+      } finally {
+        submitting.current = false;
+      }
     });
   }
 
@@ -51,46 +68,47 @@ export function ResetPasswordPanel({ users }: { users: UserRow[] }) {
           value={query}
           onChange={(e) => setQuery(e.target.value)}
           placeholder="Cari nama atau NISN/NIP..."
+          aria-label="Cari pengguna berdasarkan nama atau NISN/NIP"
+          disabled={isPending}
         />
       </div>
       {query.trim() && (
         <div className="mt-3 space-y-2">
-          {results.map((u) => (
+          {results.length > 8 && (
+            <p className="text-xs text-muted-foreground">
+              Menampilkan 8 dari {results.length} pengguna. Persempit pencarian dengan nama atau
+              NISN/NIP.
+            </p>
+          )}
+          {results.slice(0, 8).map((u) => (
             <div
               key={u.id}
               className="flex items-center justify-between gap-3 rounded-none border px-3 py-2"
             >
-              <div>
-                <div className="text-sm font-medium">{u.name}</div>
-                <div className="text-xs capitalize text-muted-foreground">
-                  {u.role} · {u.identifier ?? "-"}
+              <div className="min-w-0">
+                <div className="break-words text-sm font-medium">{u.name}</div>
+                <div className="break-words text-xs text-muted-foreground">
+                  {ROLE_LABELS[u.role] ?? u.role} · NISN/NIP: {u.identifier || "-"}
                 </div>
+                {!u.identifier?.trim() && (
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    NISN/NIP belum tersedia; reset otomatis tidak dapat dilakukan.
+                  </p>
+                )}
               </div>
-              <AlertDialog>
-                <AlertDialogTrigger asChild>
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    className="rounded-none"
-                    disabled={isPending && resettingId === u.id}
-                  >
-                    {isPending && resettingId === u.id ? "Mereset..." : "Reset"}
-                  </Button>
-                </AlertDialogTrigger>
-                <AlertDialogContent>
-                  <AlertDialogHeader>
-                    <AlertDialogTitle>Reset password {u.name}?</AlertDialogTitle>
-                    <AlertDialogDescription>
-                      Password akan dikembalikan ke NISN/NIP default mereka ({u.identifier ?? "-"}
-                      ). Password lama tidak akan berfungsi lagi.
-                    </AlertDialogDescription>
-                  </AlertDialogHeader>
-                  <AlertDialogFooter>
-                    <AlertDialogCancel>Batal</AlertDialogCancel>
-                    <AlertDialogAction onClick={() => handleReset(u)}>Reset</AlertDialogAction>
-                  </AlertDialogFooter>
-                </AlertDialogContent>
-              </AlertDialog>
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                className="shrink-0 rounded-none"
+                disabled={isPending || !u.identifier?.trim()}
+                onClick={() => {
+                  setError(null);
+                  setSelectedUser(u);
+                }}
+              >
+                Reset
+              </Button>
             </div>
           ))}
           {results.length === 0 && (
@@ -98,6 +116,40 @@ export function ResetPasswordPanel({ users }: { users: UserRow[] }) {
           )}
         </div>
       )}
+      <AlertDialog
+        open={Boolean(selectedUser)}
+        onOpenChange={(open) => {
+          if (!open && !submitting.current) setSelectedUser(null);
+        }}
+      >
+        <AlertDialogContent aria-busy={isPending}>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Reset password {selectedUser?.name}?</AlertDialogTitle>
+            <AlertDialogDescription>
+              {selectedUser && (ROLE_LABELS[selectedUser.role] ?? selectedUser.role)} · NISN/NIP:{" "}
+              {selectedUser?.identifier}. Password akan dikembalikan ke NISN/NIP tersebut. Password
+              sebelumnya akan diganti. Minta pengguna segera mengganti password setelah masuk.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          {error && (
+            <p role="alert" className="text-sm text-destructive">
+              {error}
+            </p>
+          )}
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={isPending}>Batal</AlertDialogCancel>
+            <AlertDialogAction
+              disabled={isPending}
+              onClick={(event) => {
+                event.preventDefault();
+                if (selectedUser) handleReset(selectedUser);
+              }}
+            >
+              {isPending ? "Mereset..." : "Reset Password"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </>
   );
 }

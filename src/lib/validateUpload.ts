@@ -1,3 +1,8 @@
+export const SCHOOL_LOGO_UPLOAD = {
+  allowedTypes: ["image/png", "image/jpeg", "image/webp", "image/svg+xml"],
+  maxSizeMB: 2,
+};
+
 export function validateFileUpload(
   file: File,
   opts: { allowedTypes: string[]; maxSizeMB: number },

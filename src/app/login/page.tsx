@@ -4,8 +4,7 @@ import { getSchool } from "@/lib/data/school";
 import { LoginForm } from "./LoginForm";
 
 export const metadata: Metadata = {
-  title: "Masuk — SD Inpres Nggodimeda",
-  description: "Masuk ke LMS SD Inpres Nggodimeda untuk murid, guru, kepala sekolah, dan admin.",
+  title: "Masuk",
 };
 
 export default async function LoginPage() {
@@ -13,7 +12,12 @@ export default async function LoginPage() {
 
   return (
     <Suspense fallback={null}>
-      <LoginForm schoolName={school?.name ?? null} logoUrl={school?.logo_url ?? null} />
+      <LoginForm
+        schoolName={school?.name ?? null}
+        logoUrl={school?.logo_url ?? null}
+        schoolAddress={school?.address ?? null}
+        schoolPhone={school?.phone ?? null}
+      />
     </Suspense>
   );
 }

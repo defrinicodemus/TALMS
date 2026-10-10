@@ -22,12 +22,18 @@ export function PrincipalPanel({ principal }: { principal: Principal }) {
 
   function handleSubmit(formData: FormData) {
     startTransition(async () => {
-      const result = principal ? await updateStaff(formData) : await createPrincipal(formData);
-      if (result.ok) {
-        toast.success(result.message);
-        setOpen(false);
-      } else {
-        toast.error(result.message);
+      try {
+        const result = principal ? await updateStaff(formData) : await createPrincipal(formData);
+        if (result.ok) {
+          toast.success(result.message);
+          setOpen(false);
+        } else {
+          toast.error(result.message);
+        }
+      } catch {
+        toast.error(
+          "Hasil penyimpanan belum dapat dipastikan. Periksa data sebelum mencoba kembali.",
+        );
       }
     });
   }
@@ -35,19 +41,30 @@ export function PrincipalPanel({ principal }: { principal: Principal }) {
   return (
     <div className="space-y-3">
       <div className="flex items-center gap-2">
-        <Dialog open={open} onOpenChange={setOpen}>
+        <Dialog
+          open={open}
+          onOpenChange={(value) => {
+            if (!isPending) setOpen(value);
+          }}
+        >
           <DialogTrigger asChild>
             <Button className="rounded-xl">
               {principal ? "Edit Kepala Sekolah" : "+ Tambah Kepala Sekolah"}
             </Button>
           </DialogTrigger>
-          <DialogContent>
+          <DialogContent dismissOnOverlayOnly>
             <DialogHeader>
               <DialogTitle>
                 {principal ? "Edit Kepala Sekolah" : "Tambah Kepala Sekolah"}
               </DialogTitle>
             </DialogHeader>
-            <form action={handleSubmit} className="space-y-3">
+            <form
+              onSubmit={(event) => {
+                event.preventDefault();
+                if (!isPending) handleSubmit(new FormData(event.currentTarget));
+              }}
+              className="space-y-3"
+            >
               {principal && <input type="hidden" name="id" value={principal.id} />}
               <div>
                 <Label>Nama</Label>

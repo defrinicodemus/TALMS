@@ -376,6 +376,63 @@ hosted database or simultaneous PostgreSQL connections. The older activation
 migration has a separate historical regression suite; current switching behavior
 is covered by `academic-maintenance.test.mjs`.
 
+## Student transfers during administration
+
+Apply `migrations/20261010000002_student_transfers.sql` after the two academic
+period migrations above, before using the updated **Perpindahan Siswa** feature.
+This migration adds only the `transfer_academic_students` function and its
+execution grants. It does not add tables/columns/statuses or rewrite any data.
+
+- The admin-only RPC checks the authenticated admin's school and requires no
+  active period in that school. It shares the school row lock used by activation
+  and deactivation, then rechecks period status before processing placements.
+- **Pergantian Semester:** ganjil to genap within the same year, unchanged grade,
+  including grade 6. **Kenaikan Kelas:** genap to ganjil in the immediately following
+  year, grades 1–5 moving up exactly one level. Labels must describe consecutive
+  years, such as `2026/2027`. No graduation/account deletion is performed.
+- Every mapping, school, period, grade and selected student's current placement
+  is validated. Duplicate students/source/target mappings and empty requests are
+  rejected. Selected student rows are locked before any writes. A failure rolls
+  back the entire RPC; replaying an already completed request is rejected.
+- Only selected students' existing `profiles.class_id` values are updated
+  (along with the existing `updated_at` trigger). Unselected students stay in
+  their original classes. No history/enrollment structure is introduced.
+- Teacher-mapel assignments are managed separately in **Master Kelas**. Transfers
+  never copy/overwrite assignments, change homerooms, move learning records, or
+  activate a period. Existing manual placement controls remain separate.
+- The activation dialog reads a fresh readiness summary: target classes/students,
+  students without a class or in other periods, empty classes, and missing teacher
+  assignments based on each subject's grade range. Findings are advisory, not an
+  approval workflow. A failed summary query is shown with a retry button instead
+  of falsely reporting readiness. The summary does not infer alumni/repeating status.
+
+### Manual verification
+
+Use disposable students/classes for transfer checks; successful transfers have
+no automatic undo. Activate/deactivate periods only during an agreed maintenance
+window if testing against a school database.
+
+1. While a period is active, check the disabled transfer button and explanatory
+   message. A direct transfer RPC must also reject the request.
+2. Close the period, create the destination period/classes, then select a transfer
+   type. Check that only the matching next period and destination grade appear.
+   Changing source/type must reset the destination and student mappings.
+3. Select two classes, uncheck one student, and inspect the confirmation summary.
+   Cancel first: no data changes. Confirm: only selected students move; unchecked
+   students and both old/new teacher assignments remain intact. No period activates.
+4. Test grade 6 in a semester transfer. It must remain grade 6; grade 6 must not
+   appear as a source in promotion mode. An invalid/empty destination cannot run.
+5. Inspect the activation summary with missing teacher assignments/placements.
+   Cancel, prepare teachers in Master Kelas, and reopen it: counts must refresh.
+   Warnings do not prevent activation. On activation, student/teacher operational
+   views use the active period according to their prepared placements/assignments.
+
+`npm run test:security` includes real SQL tests in disposable PGlite for role and
+school boundaries, invalid/stale requests, failed-write rollback, unchanged
+teacher/learning records and schema, and activation after transfers. Action and
+readiness tests also run locally. Hosted database deployment and simultaneous
+multi-connection PostgreSQL locking are not exercised by those tests.
+
 ## Demo accounts (seeded by seed.sql)
 
 Password is always `<username>123`.

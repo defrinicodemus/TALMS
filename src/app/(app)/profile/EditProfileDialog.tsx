@@ -86,7 +86,7 @@ export function EditProfileDialog({
           Data Diri
         </Button>
       </DialogTrigger>
-      <DialogContent className="rounded-md">
+      <DialogContent dismissOnOverlayOnly={isAdmin} className="rounded-md">
         <DialogHeader>
           <DialogTitle>Data Diri</DialogTitle>
         </DialogHeader>

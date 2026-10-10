@@ -1,6 +1,7 @@
 import { PageHeader } from "@/components/PageHeader";
 import { Card } from "@/components/ui/card";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { UsersTabs } from "./UsersTabs";
 import { listStudentsWithAvg, listTeachersWithStats, getPrincipal } from "@/lib/data/people";
 import { listAcademicYears, listClasses } from "@/lib/data/school";
 import { requireRole } from "@/lib/auth/guard";
@@ -26,7 +27,7 @@ export default async function UsersPage() {
         title="Manajemen Pengguna"
         subtitle="Kelola akun guru, siswa, dan kepala sekolah"
       />
-      <Tabs defaultValue="siswa">
+      <UsersTabs>
         <TabsList className="rounded-none bg-muted p-1">
           <TabsTrigger value="siswa" className="rounded-none">
             Siswa
@@ -56,7 +57,7 @@ export default async function UsersPage() {
             <PrincipalPanel principal={principal} />
           </Card>
         </TabsContent>
-      </Tabs>
+      </UsersTabs>
     </div>
   );
 }

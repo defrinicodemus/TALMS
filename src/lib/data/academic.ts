@@ -2,7 +2,7 @@ import { createClient } from "@/lib/supabase/server";
 
 export async function getAcademicStructure() {
   const supabase = await createClient();
-  const [{ data: classes }, { data: subjects }, { data: years }, { data: students }] =
+  const [classResult, subjectResult, yearResult, studentResult, assignmentResult] =
     await Promise.all([
       supabase
         .from("classes")
@@ -20,11 +20,20 @@ export async function getAcademicStructure() {
         .select("id, full_name, nisn, class_id")
         .eq("role", "student")
         .order("full_name"),
+      supabase.from("class_teacher_subjects").select("class_id, subject_id"),
     ]);
+  if (
+    [classResult, subjectResult, yearResult, studentResult, assignmentResult].some(
+      (result) => result.error,
+    )
+  ) {
+    throw new Error("Data struktur akademik belum dapat dimuat. Coba lagi.");
+  }
   return {
-    classes: classes ?? [],
-    subjects: subjects ?? [],
-    years: years ?? [],
-    students: students ?? [],
+    classes: classResult.data ?? [],
+    subjects: subjectResult.data ?? [],
+    years: yearResult.data ?? [],
+    students: studentResult.data ?? [],
+    assignments: assignmentResult.data ?? [],
   };
 }

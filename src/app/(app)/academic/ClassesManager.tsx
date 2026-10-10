@@ -33,6 +33,7 @@ import {
   AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
 import { createClass, updateClass, deleteClass } from "../actions";
+import { useAdminFilters } from "@/hooks/use-admin-filters";
 
 type ClassRow = { id: string; name: string; grade_level: number; academic_year_id: string };
 type YearRow = { id: string; year_label: string; semester: string; is_active: boolean };
@@ -50,12 +51,18 @@ export function ClassesManager({
   const [editing, setEditing] = useState<ClassRow | null>(null);
   const [isPending, startTransition] = useTransition();
   const editingYear = years.find((year) => year.id === editing?.academic_year_id);
+  const { params, setFilters } = useAdminFilters();
+  const selectedYearId = params.get("year");
+  const setSelectedYearId = (year: string) => setFilters({ year });
+  const selectedYear = years.find((year) => year.id === selectedYearId) ?? activeYear ?? years[0];
+  const yearClasses = classes.filter((c) => c.academic_year_id === selectedYear?.id);
 
   function handleSubmit(formData: FormData) {
     startTransition(async () => {
       const result = editing ? await updateClass(formData) : await createClass(formData);
       if (result.ok) {
         toast.success(result.message);
+        if (!editing) setSelectedYearId(String(formData.get("academic_year_id") ?? ""));
         setOpen(false);
       } else {
         toast.error(result.message);
@@ -83,7 +90,7 @@ export function ClassesManager({
         <div>
           <h2 className="font-display text-xl font-bold">Kelas & Rombel</h2>
           <p className="mt-1 text-xs text-muted-foreground">
-            Kelas dikelompokkan berdasarkan tahun ajaran dan semester.
+            Pilih tahun ajaran dan semester untuk melihat kelas.
           </p>
         </div>
         <Dialog
@@ -103,7 +110,7 @@ export function ClassesManager({
               + Tambah Kelas
             </Button>
           </DialogTrigger>
-          <DialogContent>
+          <DialogContent dismissOnOverlayOnly>
             <DialogHeader>
               <DialogTitle>{editing ? "Edit Kelas" : "Tambah Kelas"}</DialogTitle>
             </DialogHeader>
@@ -134,7 +141,7 @@ export function ClassesManager({
               {!editing && (
                 <div>
                   <Label>Tahun Ajaran</Label>
-                  <Select name="academic_year_id" defaultValue={activeYear?.id} required>
+                  <Select name="academic_year_id" defaultValue={selectedYear?.id} required>
                     <SelectTrigger className="mt-1">
                       <SelectValue placeholder="Pilih tahun ajaran" />
                     </SelectTrigger>
@@ -186,54 +193,72 @@ export function ClassesManager({
           </DialogContent>
         </Dialog>
       </div>
+      <div className="mt-4 max-w-sm space-y-1">
+        <Label htmlFor="class-year-filter">Tahun Ajaran / Semester</Label>
+        <Select
+          value={selectedYear?.id ?? ""}
+          onValueChange={setSelectedYearId}
+          disabled={isPending || years.length === 0}
+        >
+          <SelectTrigger id="class-year-filter" className="rounded-none">
+            <SelectValue placeholder="Belum ada tahun ajaran" />
+          </SelectTrigger>
+          <SelectContent>
+            {years.map((year) => (
+              <SelectItem key={year.id} value={year.id}>
+                {year.year_label} · {year.semester === "ganjil" ? "Ganjil" : "Genap"}
+                {year.is_active ? " · Aktif" : ""}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+      </div>
       <div className="mt-5 space-y-5">
-        {years.map((year) => {
-          const yearClasses = classes.filter((c) => c.academic_year_id === year.id);
-          return (
-            <section
-              key={year.id}
-              aria-label={`Kelas tahun ajaran ${year.year_label} semester ${year.semester}`}
-              className="space-y-3"
-            >
-              <div className="flex flex-wrap items-center justify-between gap-2 border-b pb-2">
-                <h3 className="text-sm font-semibold">
-                  {year.year_label} · Semester {year.semester === "ganjil" ? "Ganjil" : "Genap"}
-                </h3>
-                <div className="flex items-center gap-2 text-xs">
-                  <span className="text-muted-foreground">{yearClasses.length} kelas</span>
-                  <span
-                    className={`px-2 py-0.5 ${year.is_active ? "bg-primary/10 font-medium text-primary" : "bg-muted text-muted-foreground"}`}
-                  >
-                    {year.is_active ? "Aktif" : "Belum Aktif"}
+        {selectedYear && (
+          <section
+            key={selectedYear.id}
+            aria-label={`Kelas tahun ajaran ${selectedYear.year_label} semester ${selectedYear.semester}`}
+            className="space-y-3"
+          >
+            <div className="flex flex-wrap items-center justify-between gap-2 border-b pb-2">
+              <h3 className="text-sm font-semibold">
+                {selectedYear.year_label} · Semester{" "}
+                {selectedYear.semester === "ganjil" ? "Ganjil" : "Genap"}
+              </h3>
+              <div className="flex items-center gap-2 text-xs">
+                <span className="text-muted-foreground">{yearClasses.length} kelas</span>
+                <span
+                  className={`px-2 py-0.5 ${selectedYear.is_active ? "bg-primary/10 font-medium text-primary" : "bg-muted text-muted-foreground"}`}
+                >
+                  {selectedYear.is_active ? "Aktif" : "Belum Aktif"}
+                </span>
+              </div>
+            </div>
+            <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
+              {yearClasses.map((c) => (
+                <button
+                  key={c.id}
+                  onClick={() => {
+                    setEditing(c);
+                    setOpen(true);
+                  }}
+                  aria-label={`Edit kelas ${c.name}, ${selectedYear.year_label}, semester ${selectedYear.semester}`}
+                  className="rounded-none bg-primary-soft/30 px-4 py-3 text-left hover:bg-primary-soft/50"
+                >
+                  <span className="block text-sm font-semibold">{c.name}</span>
+                  <span className="mt-1 block text-xs text-muted-foreground">
+                    Tingkat {c.grade_level}
                   </span>
-                </div>
-              </div>
-              <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
-                {yearClasses.map((c) => (
-                  <button
-                    key={c.id}
-                    onClick={() => {
-                      setEditing(c);
-                      setOpen(true);
-                    }}
-                    aria-label={`Edit kelas ${c.name}, ${year.year_label}, semester ${year.semester}`}
-                    className="rounded-none bg-primary-soft/30 px-4 py-3 text-left hover:bg-primary-soft/50"
-                  >
-                    <span className="block text-sm font-semibold">{c.name}</span>
-                    <span className="mt-1 block text-xs text-muted-foreground">
-                      Tingkat {c.grade_level}
-                    </span>
-                  </button>
-                ))}
-              </div>
-              {yearClasses.length === 0 && (
-                <p className="text-sm text-muted-foreground">
-                  Belum ada kelas pada tahun ajaran ini.
-                </p>
-              )}
-            </section>
-          );
-        })}
+                </button>
+              ))}
+            </div>
+            {yearClasses.length === 0 && (
+              <p className="text-sm text-muted-foreground">
+                Belum ada kelas pada tahun ajaran ini.
+              </p>
+            )}
+          </section>
+        )}
         {years.length === 0 && (
           <p className="text-sm text-muted-foreground">
             Tambahkan tahun ajaran terlebih dahulu untuk membuat kelas.

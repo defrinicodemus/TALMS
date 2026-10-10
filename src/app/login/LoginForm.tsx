@@ -6,17 +6,33 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { Sparkles, BookOpen, ClipboardList, ShieldCheck, Copyright } from "lucide-react";
+import {
+  Sparkles,
+  BookOpen,
+  ClipboardList,
+  ShieldCheck,
+  Copyright,
+  MapPin,
+  Phone,
+} from "lucide-react";
 import { cn } from "@/lib/utils";
 import { login } from "./actions";
 
 export function LoginForm({
   schoolName,
   logoUrl,
+  schoolAddress,
+  schoolPhone,
 }: {
   schoolName: string | null;
   logoUrl: string | null;
+  schoolAddress: string | null;
+  schoolPhone: string | null;
 }) {
+  const displaySchoolName = schoolName?.trim() || "Sekolah";
+  const address = schoolAddress?.trim();
+  const phone = schoolPhone?.trim();
+  const phoneNumber = phone?.replace(/[^\d+]/g, "");
   const searchParams = useSearchParams();
   const err = searchParams.get("error");
   const [username, setUsername] = useState("");
@@ -24,8 +40,8 @@ export function LoginForm({
   const [forgotOpen, setForgotOpen] = useState(false);
 
   return (
-    <div className="flex min-h-screen flex-col bg-background bg-grain md:h-screen md:overflow-hidden">
-      <div className="mx-auto flex w-full max-w-6xl flex-1 flex-col px-4 pb-10 pt-6 md:grid md:grid-cols-2 md:items-center md:gap-12 md:overflow-hidden md:px-8 md:py-6 lg:gap-16 lg:px-12">
+    <div className="flex min-h-screen flex-col bg-background bg-grain">
+      <div className="mx-auto flex w-full max-w-6xl flex-1 flex-col px-4 pb-10 pt-6 md:grid md:grid-cols-2 md:items-center md:gap-12 md:px-8 md:py-6 lg:gap-16 lg:px-12">
         {/* Hero */}
         <section className="md:max-h-full md:overflow-hidden">
           <div className="relative overflow-hidden rounded-t-3xl gradient-primary px-6 pb-16 pt-8 text-primary-foreground shadow-glow md:rounded-3xl md:p-8 lg:p-10">
@@ -41,7 +57,7 @@ export function LoginForm({
                 {logoUrl ? (
                   <img
                     src={logoUrl}
-                    alt={schoolName ?? "Logo sekolah"}
+                    alt={`Logo ${displaySchoolName}`}
                     className="h-full w-full object-contain"
                   />
                 ) : (
@@ -50,14 +66,16 @@ export function LoginForm({
               </div>
 
               {/* Mobile-only brand line */}
-              <div className="mt-3 text-base font-semibold md:hidden">LMS SD Inpres Nggodimeda</div>
+              <div className="mt-3 break-words text-base font-semibold md:hidden">
+                LMS {displaySchoolName}
+              </div>
 
               {/* Desktop-only marketing content */}
               <div className="hidden md:block">
                 <h1 className="mt-3 font-display text-3xl font-bold leading-tight text-center md:text-4xl">
                   Belajar di
                   <br />
-                  <span className="text-accent">{schoolName ?? "SD Inpres Nggodimeda"}</span>
+                  <span className="break-words text-accent">{displaySchoolName}</span>
                 </h1>
                 <p className="mt-4 max-w-md text-sm text-primary-foreground/85 md:text-base">
                   Learning Management System yang membantu guru mengajar dan peserta didik belajar
@@ -87,7 +105,7 @@ export function LoginForm({
             <div className="mb-6 text-center md:text-left">
               <h2 className="font-display text-2xl font-bold lg:text-3xl">Selamat datang</h2>
               <p className="text-sm text-muted-foreground">
-                Masuk Untuk Melakukan Pembelajaran di LMS <br /> SD Inpres Nggodimeda
+                Masuk untuk melakukan pembelajaran di LMS <br /> {displaySchoolName}
               </p>
             </div>
 
@@ -136,9 +154,41 @@ export function LoginForm({
         </section>
       </div>
 
-      <footer className="flex shrink-0 items-center justify-center gap-1.5 pb-8 text-xs text-muted-foreground md:pb-4">
-        <Copyright className="h-3.5 w-3.5" />
-        <span>{new Date().getFullYear()} LMS SD Inpres Nggodimeda</span>
+      <footer className="shrink-0 px-4 pb-8 text-center text-xs text-muted-foreground md:px-8 md:pb-4">
+        <div className="mx-auto flex max-w-3xl flex-col items-center gap-3">
+          {(address || phone) && (
+            <address className="flex max-w-full flex-col items-center gap-2 not-italic">
+              {address && (
+                <div className="flex max-w-full items-start gap-2">
+                  <MapPin className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+                  <span className="min-w-0 whitespace-pre-line break-words">{address}</span>
+                </div>
+              )}
+              {phone && (
+                <div className="flex max-w-full items-center gap-2">
+                  <Phone className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+                  {phoneNumber && /\d/.test(phoneNumber) ? (
+                    <a
+                      href={`tel:${phoneNumber}`}
+                      aria-label={`Telepon sekolah ${phone}`}
+                      className="min-w-0 break-words underline-offset-4 hover:text-primary hover:underline focus-visible:underline"
+                    >
+                      {phone}
+                    </a>
+                  ) : (
+                    <span className="min-w-0 break-words">{phone}</span>
+                  )}
+                </div>
+              )}
+            </address>
+          )}
+          <div className="flex max-w-full items-center justify-center gap-1.5">
+            <Copyright className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+            <span className="min-w-0 break-words">
+              {new Date().getFullYear()} LMS {displaySchoolName}
+            </span>
+          </div>
+        </div>
       </footer>
 
       <Dialog open={forgotOpen} onOpenChange={setForgotOpen}>

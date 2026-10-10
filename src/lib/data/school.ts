@@ -1,6 +1,8 @@
+import { cache } from "react";
 import { createClient } from "@/lib/supabase/server";
 
-export async function getSchool() {
+// Share the school lookup between metadata, layout, and page in one request.
+export const getSchool = cache(async () => {
   const supabase = await createClient();
   const { data } = await supabase
     .from("schools")
@@ -8,7 +10,7 @@ export async function getSchool() {
     .limit(1)
     .single();
   return data;
-}
+});
 
 export async function listClasses() {
   const supabase = await createClient();

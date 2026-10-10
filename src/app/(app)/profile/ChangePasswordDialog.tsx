@@ -14,7 +14,7 @@ import {
 } from "@/components/ui/dialog";
 import { changePassword } from "../actions";
 
-export function ChangePasswordDialog() {
+export function ChangePasswordDialog({ isAdmin = false }: { isAdmin?: boolean }) {
   const [open, setOpen] = useState(false);
   const [isPending, startTransition] = useTransition();
 
@@ -37,7 +37,7 @@ export function ChangePasswordDialog() {
           Ganti Kata Sandi
         </Button>
       </DialogTrigger>
-      <DialogContent className="rounded-md">
+      <DialogContent dismissOnOverlayOnly={isAdmin} className="rounded-md">
         <DialogHeader>
           <DialogTitle>Ganti Kata Sandi</DialogTitle>
         </DialogHeader>

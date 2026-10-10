@@ -30,6 +30,7 @@ import {
   AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
 import { createStudent, updateStudent, deleteStudent } from "./actions";
+import { useAdminFilters } from "@/hooks/use-admin-filters";
 
 type Student = {
   id: string;
@@ -49,16 +50,19 @@ export function StudentsPanel({
   classes: ClassOption[];
   years: AcademicYearOption[];
 }) {
-  const [selectedYearId, setYearId] = useState(years[0]?.id ?? "");
+  const { params, setFilters } = useAdminFilters();
+  const selectedYearId = params.get("year") ?? "";
   const yearId = years.some((year) => year.id === selectedYearId)
     ? selectedYearId
     : (years[0]?.id ?? "");
   const availableClasses = classes.filter((c) => c.academicYearId === yearId);
-  const [selectedClassId, setClassId] = useState(availableClasses[0]?.id ?? "");
+  const selectedClassId = params.get("class");
   const classId =
     availableClasses.find((c) => c.id === selectedClassId)?.id ?? availableClasses[0]?.id ?? "";
   const [query, setQuery] = useState("");
   const searching = query.trim().length > 0;
+  const unplacedOnly = params.get("placement") === "unplaced";
+  const unplacedCount = students.filter((student) => !student.classId).length;
 
   const [open, setOpen] = useState(false);
   const [editing, setEditing] = useState<Student | null>(null);
@@ -69,19 +73,20 @@ export function StudentsPanel({
   const classLabels = useMemo(() => new Map(classes.map((c) => [c.id, c.label])), [classes]);
 
   const rows = useMemo(() => {
+    const candidates = unplacedOnly ? students.filter((s) => !s.classId) : students;
     if (searching) {
       const q = query.trim().toLowerCase();
-      return students.filter(
+      return candidates.filter(
         (s) => s.name.toLowerCase().includes(q) || (s.nisn ?? "").toLowerCase().includes(q),
       );
     }
-    return students.filter((s) => s.classId === classId);
-  }, [students, classId, query, searching]);
+    return unplacedOnly ? candidates : candidates.filter((s) => s.classId === classId);
+  }, [students, classId, query, searching, unplacedOnly]);
 
   function openAdd() {
     setEditing(null);
     setFormYearId(yearId);
-    setFormClassId(classId);
+    setFormClassId(unplacedOnly ? "" : classId);
     setOpen(true);
   }
 
@@ -101,12 +106,18 @@ export function StudentsPanel({
       return;
     }
     startTransition(async () => {
-      const result = editing ? await updateStudent(formData) : await createStudent(formData);
-      if (result.ok) {
-        toast.success(result.message);
-        setOpen(false);
-      } else {
-        toast.error(result.message);
+      try {
+        const result = editing ? await updateStudent(formData) : await createStudent(formData);
+        if (result.ok) {
+          toast.success(result.message);
+          setOpen(false);
+        } else {
+          toast.error(result.message);
+        }
+      } catch {
+        toast.error(
+          "Hasil penyimpanan belum dapat dipastikan. Periksa data sebelum mencoba kembali.",
+        );
       }
     });
   }
@@ -131,6 +142,7 @@ export function StudentsPanel({
         <Dialog
           open={open}
           onOpenChange={(v) => {
+            if (isPending) return;
             setOpen(v);
             if (!v) setEditing(null);
           }}
@@ -140,11 +152,17 @@ export function StudentsPanel({
               + Tambah Siswa
             </Button>
           </DialogTrigger>
-          <DialogContent>
+          <DialogContent dismissOnOverlayOnly>
             <DialogHeader>
               <DialogTitle>{editing ? "Edit Siswa" : "Tambah Siswa"}</DialogTitle>
             </DialogHeader>
-            <form action={handleSubmit} className="space-y-3">
+            <form
+              onSubmit={(event) => {
+                event.preventDefault();
+                if (!isPending) handleSubmit(new FormData(event.currentTarget));
+              }}
+              className="space-y-3"
+            >
               {editing && <input type="hidden" name="id" value={editing.id} />}
               <input type="hidden" name="class_id" value={formClassId ?? ""} />
               <div>
@@ -223,19 +241,23 @@ export function StudentsPanel({
           <Upload className="mr-2 h-4 w-4" /> Import Excel
         </Button> */}
         <div className="flex w-full flex-wrap items-end gap-3 sm:ml-auto sm:w-auto">
-          <AcademicClassSelector
-            years={years}
-            classes={classes}
-            yearId={yearId}
-            classId={classId}
-            onYearChange={(nextYearId) => {
-              setYearId(nextYearId);
-              setClassId(classes.find((c) => c.academicYearId === nextYearId)?.id ?? "");
-            }}
-            onClassChange={setClassId}
-            disabled={isPending}
-            className="w-full sm:w-[440px]"
-          />
+          {!unplacedOnly && (
+            <AcademicClassSelector
+              years={years}
+              classes={classes}
+              yearId={yearId}
+              classId={classId}
+              onYearChange={(nextYearId) => {
+                setFilters({
+                  year: nextYearId,
+                  class: classes.find((c) => c.academicYearId === nextYearId)?.id ?? null,
+                });
+              }}
+              onClassChange={(nextClassId) => setFilters({ year: yearId, class: nextClassId })}
+              disabled={isPending}
+              className="w-full sm:w-[440px]"
+            />
+          )}
           <div className="relative w-full sm:w-56">
             <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
             <Input
@@ -248,7 +270,34 @@ export function StudentsPanel({
           </div>
         </div>
       </div>
-      {searching && (
+      <div className="flex flex-wrap gap-2" aria-label="Tampilan daftar siswa">
+        <Button
+          type="button"
+          size="sm"
+          variant={unplacedOnly ? "outline" : "secondary"}
+          aria-pressed={!unplacedOnly}
+          disabled={isPending}
+          onClick={() => setFilters({ placement: null })}
+        >
+          Per Kelas
+        </Button>
+        <Button
+          type="button"
+          size="sm"
+          variant={unplacedOnly ? "secondary" : "outline"}
+          aria-pressed={unplacedOnly}
+          disabled={isPending}
+          onClick={() => setFilters({ placement: "unplaced" })}
+        >
+          Belum memiliki kelas ({unplacedCount})
+        </Button>
+      </div>
+      {unplacedOnly && (
+        <p className="text-xs text-muted-foreground">
+          Siswa tanpa kelas dari semua periode. Klik Edit untuk menentukan penempatan kelas.
+        </p>
+      )}
+      {searching && !unplacedOnly && (
         <p className="text-xs text-muted-foreground">
           Menampilkan hasil pencarian dari semua tahun ajaran dan kelas.
         </p>
@@ -291,13 +340,15 @@ export function StudentsPanel({
                   colSpan={searching ? 4 : 3}
                   className="px-4 py-6 text-center text-muted-foreground"
                 >
-                  {searching
-                    ? "Tidak ditemukan."
-                    : !yearId
-                      ? "Belum ada tahun ajaran. Tambahkan melalui Struktur Akademik terlebih dahulu."
-                      : !classId
-                        ? "Belum ada kelas pada periode ini. Tambahkan melalui Struktur Akademik terlebih dahulu."
-                        : "Belum ada siswa di kelas ini."}
+                  {unplacedOnly && !searching
+                    ? "Semua siswa sudah memiliki kelas."
+                    : searching
+                      ? "Tidak ditemukan."
+                      : !yearId
+                        ? "Belum ada tahun ajaran. Tambahkan melalui Struktur Akademik terlebih dahulu."
+                        : !classId
+                          ? "Belum ada kelas pada periode ini. Tambahkan melalui Struktur Akademik terlebih dahulu."
+                          : "Belum ada siswa di kelas ini."}
                 </td>
               </tr>
             )}

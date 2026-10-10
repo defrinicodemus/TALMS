@@ -91,6 +91,7 @@ export function AppSidebar({
 }) {
   const { user, logout } = useAuth();
   const path = usePathname();
+  const displaySchoolName = schoolName?.trim() || "Sekolah";
   if (!user) return null;
   const items = NAV[user.role];
 
@@ -107,7 +108,7 @@ export function AppSidebar({
             {logoUrl ? (
               <img
                 src={logoUrl}
-                alt={schoolName ?? "Logo sekolah"}
+                alt={`Logo ${displaySchoolName}`}
                 className="h-full w-full object-contain"
               />
             ) : (
@@ -116,7 +117,7 @@ export function AppSidebar({
           </div>
           <div className="min-w-0 flex-1 group-data-[collapsible=icon]:hidden">
             <div className="break-words font-display text-base font-bold leading-tight text-sidebar-foreground">
-              {schoolName ?? "SD Inpres Nggodimeda"}
+              {displaySchoolName}
             </div>
             <div className="text-[10px] font-medium text-sidebar-foreground/60">LMS Sekolah</div>
           </div>
@@ -168,7 +169,7 @@ export function AppSidebar({
           </Button>
         </div>
         <div className="px-3 pb-3 text-[10px] text-sidebar-foreground/50 group-data-[collapsible=icon]:hidden">
-          {schoolName ?? "SD Inpres Nggodimeda"}
+          {displaySchoolName}
         </div>
       </SidebarFooter>
     </Sidebar>
