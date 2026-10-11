@@ -4,6 +4,7 @@ import { ArrowLeft } from "lucide-react";
 import { PageHeader } from "@/components/PageHeader";
 import { Card } from "@/components/ui/card";
 import { getAnnouncementById } from "@/lib/data/announcements";
+import { getCurrentUser } from "@/lib/data/profile";
 import { getCategoryBadgeClass } from "@/lib/announcement-categories";
 
 function formatDate(iso: string) {
@@ -24,14 +25,18 @@ export default async function AnnouncementDetailPage({
 }) {
   const { id } = await params;
   const { page } = await searchParams;
-  const announcement = await getAnnouncementById(id);
+  const [announcement, user] = await Promise.all([getAnnouncementById(id), getCurrentUser()]);
   if (!announcement) notFound();
 
   const backHref = page ? `/announcements?page=${page}` : "/announcements";
 
   return (
     <div className="space-y-6">
-      <PageHeader icon="📣" title="Detail Pengumuman" rounded="blunt" />
+      <PageHeader
+        icon="📣"
+        title="Detail Pengumuman"
+        rounded={user?.role === "admin" ? "none" : "blunt"}
+      />
       <Link
         href={backHref}
         className="inline-flex items-center gap-1.5 text-sm font-medium text-primary hover:underline"

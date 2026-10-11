@@ -51,7 +51,7 @@ export default async function AnnouncementsPage({
         icon="📣"
         title="Pengumuman"
         subtitle={isAdmin ? "Buat dan kelola pengumuman sekolah" : "Daftar pengumuman sekolah"}
-
+        rounded={isAdmin ? "none" : "default"}
       />
       <div className="grid gap-6 lg:grid-cols-3">
         {isAdmin && (

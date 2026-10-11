@@ -26,6 +26,7 @@ export default async function UsersPage() {
         icon="👥"
         title="Manajemen Pengguna"
         subtitle="Kelola akun guru, siswa, dan kepala sekolah"
+        rounded="none"
       />
       <UsersTabs>
         <TabsList className="rounded-none bg-muted p-1">

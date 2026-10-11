@@ -35,6 +35,7 @@ export default async function SettingsPage() {
         icon="⚙️"
         title="Pengaturan Sistem"
         subtitle="Profil sekolah, reset password, dan ekspor data sekolah"
+        rounded="none"
       />
       <div className="grid gap-6 lg:grid-cols-2">
         <Card className="rounded-none border-0 p-6 shadow-soft">

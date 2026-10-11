@@ -18,9 +18,11 @@ export default async function ProfilePage() {
         icon="👤"
         title="Profil Saya"
         subtitle="Informasi akun dan pengaturan"
-        rounded="blunt"
+        rounded={user.role === "admin" ? "none" : "blunt"}
       />
-      <Card className="@container rounded-md border-0 p-4 shadow-soft @sm:p-6 @lg:p-8">
+      <Card
+        className={`@container border-0 p-4 shadow-soft @sm:p-6 @lg:p-8 ${user.role === "admin" ? "rounded-none" : "rounded-md"}`}
+      >
         <div className="flex flex-wrap items-center gap-4 @sm:gap-6">
           <div className="grid size-16 shrink-0 place-items-center rounded-md gradient-primary text-2xl text-primary-foreground shadow-glow @sm:size-20 @sm:text-4xl @lg:size-24 @lg:text-5xl">
             {user.avatar ?? "🙂"}
@@ -46,7 +48,9 @@ export default async function ProfilePage() {
         </div>
       </Card>
 
-      <Card className="@container rounded-md border-0 p-4 shadow-soft @sm:p-6">
+      <Card
+        className={`@container border-0 p-4 shadow-soft @sm:p-6 ${user.role === "admin" ? "rounded-none" : "rounded-md"}`}
+      >
         <h3 className="font-display text-base font-bold @sm:text-lg @md:text-xl">
           Pengaturan Akun
         </h3>

@@ -12,13 +12,13 @@ export function PageHeader({
   subtitle?: string;
   icon?: string;
   action?: React.ReactNode;
-  rounded?: "default" | "blunt";
+  rounded?: "default" | "blunt" | "none";
 }) {
   return (
     <Card
       className={cn(
         "flex flex-wrap items-center justify-between gap-4 border-0 gradient-soft p-6 shadow-soft md:p-8",
-        rounded === "blunt" ? "rounded-md" : "rounded-3xl",
+        { default: "rounded-3xl", blunt: "rounded-md", none: "rounded-none" }[rounded],
       )}
     >
       <div className="flex items-center gap-4">

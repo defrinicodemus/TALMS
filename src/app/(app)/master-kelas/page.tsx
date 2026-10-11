@@ -17,6 +17,7 @@ export default async function MasterKelasPage() {
         icon="🗂️"
         title="Master Kelas"
         subtitle="Pembagian guru per mata pelajaran dan siswa per kelas"
+        rounded="none"
       />
       <MasterKelasManager {...data} />
     </div>

@@ -97,11 +97,15 @@ export function AppSidebar({
 
   return (
     <Sidebar collapsible="icon">
-      <SidebarHeader className="border-b border-sidebar-border">
-        <Link href="/dashboard" className="flex min-w-0 items-center gap-2 px-2 py-3">
+      <SidebarHeader className="border-b border-sidebar-border group-data-[collapsible=icon]:px-1">
+        <Link
+          href="/dashboard"
+          aria-label={`Beranda ${displaySchoolName}`}
+          className="flex min-w-0 items-center gap-2 px-2 py-3 group-data-[collapsible=icon]:justify-center group-data-[collapsible=icon]:gap-0 group-data-[collapsible=icon]:px-0"
+        >
           <div
             className={cn(
-              "grid h-10 w-10 shrink-0 place-items-center overflow-hidden rounded-[10px] text-sidebar-primary-foreground",
+              "grid h-10 w-10 shrink-0 place-items-center overflow-hidden rounded-[10px] text-sidebar-primary-foreground group-data-[collapsible=icon]:size-8",
               logoUrl ? "bg-transparent" : "bg-sidebar-primary shadow-soft",
             )}
           >

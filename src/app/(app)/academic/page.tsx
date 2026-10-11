@@ -18,6 +18,7 @@ export default async function AcademicPage() {
         icon="🏛️"
         title="Struktur Akademik"
         subtitle="Kelola tahun ajaran, kelas, dan mata pelajaran sekolah"
+        rounded="none"
       />
       <YearsManager years={years} classes={classes} />
       <div className="grid items-start gap-6 xl:grid-cols-[minmax(0,3fr)_minmax(0,2fr)]">
