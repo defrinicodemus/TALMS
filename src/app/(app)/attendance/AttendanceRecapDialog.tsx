@@ -1,10 +1,10 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import * as XLSX from "xlsx";
+import { useEffect, useRef, useState } from "react";
+import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent } from "@/components/ui/dialog";
-import { Download } from "lucide-react";
+import { Download, Loader2 } from "lucide-react";
 import type { AttendanceRecap, AttendanceStatus } from "@/lib/data/attendance";
 import { fetchAttendanceRecap } from "./actions";
 
@@ -44,6 +44,8 @@ export function AttendanceRecapDialog({
 }) {
   const [data, setData] = useState<AttendanceRecap | null>(null);
   const [loading, setLoading] = useState(true);
+  const [isExporting, setIsExporting] = useState(false);
+  const exporting = useRef(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -59,20 +61,30 @@ export function AttendanceRecapDialog({
     };
   }, [classId, subjectId]);
 
-  function handleExport() {
-    if (!data) return;
-    const rows = data.students.map((st) => {
-      const row: Record<string, string> = { "Nama Siswa": st.fullName, NISN: st.nisn ?? "-" };
-      for (const n of data.meetingNumbers) {
-        const status = st.statusByMeeting[n];
-        row[`Pertemuan ${n}`] = status ? STATUS_LABEL[status] : "-";
-      }
-      return row;
-    });
-    const worksheet = XLSX.utils.json_to_sheet(rows);
-    const workbook = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(workbook, worksheet, "Rekap Presensi");
-    XLSX.writeFile(workbook, `Rekap-Presensi-${className}-${subjectName}.xlsx`);
+  async function handleExport() {
+    if (!data || data.meetingNumbers.length === 0 || exporting.current) return;
+    exporting.current = true;
+    setIsExporting(true);
+    try {
+      const XLSX = await import("xlsx");
+      const rows = data.students.map((st) => {
+        const row: Record<string, string> = { "Nama Siswa": st.fullName, NISN: st.nisn ?? "-" };
+        for (const n of data.meetingNumbers) {
+          const status = st.statusByMeeting[n];
+          row[`Pertemuan ${n}`] = status ? STATUS_LABEL[status] : "-";
+        }
+        return row;
+      });
+      const worksheet = XLSX.utils.json_to_sheet(rows);
+      const workbook = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(workbook, worksheet, "Rekap Presensi");
+      await XLSX.writeFile(workbook, `Rekap-Presensi-${className}-${subjectName}.xlsx`);
+    } catch {
+      toast.error("Ekspor Excel gagal. Coba lagi atau muat ulang halaman.");
+    } finally {
+      exporting.current = false;
+      setIsExporting(false);
+    }
   }
 
   return (
@@ -150,11 +162,18 @@ export function AttendanceRecapDialog({
 
             <div className="flex justify-end">
               <Button
+                type="button"
                 className="rounded-md bg-emerald-700 hover:bg-emerald-800"
-                disabled={data.meetingNumbers.length === 0}
+                disabled={isExporting || data.meetingNumbers.length === 0}
+                aria-busy={isExporting}
                 onClick={handleExport}
               >
-                <Download className="mr-2 h-4 w-4" /> Ekspor ke Excel
+                {isExporting ? (
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                ) : (
+                  <Download className="mr-2 h-4 w-4" />
+                )}
+                {isExporting ? "Menyiapkan Excel…" : "Ekspor ke Excel"}
               </Button>
             </div>
           </div>

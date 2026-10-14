@@ -32,8 +32,6 @@ type Teacher = {
   name: string;
   nip: string | null;
   teaching: Teaching[];
-  materials: number;
-  quizzes: number;
 };
 
 const MAX_BADGES = 3;

@@ -5,11 +5,6 @@ import { requireRole } from "@/lib/auth/guard";
 import { getMonitoringPembelajaranData, type MonitoringClassRow } from "@/lib/data/monitoring";
 import { tone, BADGE_CLASS, BAR_CLASS } from "@/lib/monitoringTone";
 
-const SEMESTER_LABEL: Record<"ganjil" | "genap", string> = {
-  ganjil: "Ganjil",
-  genap: "Genap",
-};
-
 export default async function StudentsPage() {
   await requireRole(["principal"]);
 
@@ -33,11 +28,6 @@ export default async function StudentsPage() {
         icon="🎓"
         title="Monitoring Pembelajaran"
         subtitle="Pantau aktivitas belajar, kehadiran, serta penyelesaian tugas dan kuis setiap kelas."
-        // action={
-        //   <span className="inline-flex items-center rounded-full bg-emerald-100 px-3 py-1 text-xs font-bold uppercase tracking-wider text-emerald-700">
-        //     {SEMESTER_LABEL[data.semester]} {data.academicYearLabel}
-        //   </span>
-        // }
       />
 
       <div className="grid gap-4 md:grid-cols-4">

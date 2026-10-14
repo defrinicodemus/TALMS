@@ -51,15 +51,6 @@ export async function listClasses() {
     );
 }
 
-export async function listSubjects() {
-  const supabase = await createClient();
-  const { data } = await supabase
-    .from("subjects")
-    .select("id, code, name, emoji, color")
-    .order("name");
-  return data ?? [];
-}
-
 export async function listAcademicYears() {
   const supabase = await createClient();
   const { data } = await supabase

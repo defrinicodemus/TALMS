@@ -26,3 +26,10 @@ next-env.d.ts
 *.njsproj
 *.sln
 *.sw?
+
+.open-next/
+.wrangler/
+.env*
+!.env.example
+.dev.vars*
+!.dev.vars.example

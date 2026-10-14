@@ -188,7 +188,7 @@ function AddAssignmentCard({
   onToggle: () => void;
 }) {
   const [title, setTitle] = useState("");
-  const [description, setDescription] = useState("");
+  const [, setDescription] = useState("");
   const [methods, setMethods] = useState<AssignmentMethod[]>(["text"]);
   const [dueDate, setDueDate] = useState("");
   const [dueTime, setDueTime] = useState("23:59");

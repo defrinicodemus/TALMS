@@ -1,7 +1,6 @@
 import { createClient } from "@/lib/supabase/server";
-import { round2 } from "@/lib/data/gradebook";
 
-export async function listStudentsWithAvg() {
+export async function listStudents() {
   const supabase = await createClient();
   const { data: students } = await supabase
     .from("profiles")
@@ -9,29 +8,18 @@ export async function listStudentsWithAvg() {
     .eq("role", "student")
     .order("full_name");
 
-  const { data: grades } = await supabase.from("grades").select("student_id, score");
-  const avgByStudent = new Map<string, { sum: number; count: number }>();
-  for (const g of grades ?? []) {
-    const acc = avgByStudent.get(g.student_id) ?? { sum: 0, count: 0 };
-    acc.sum += Number(g.score);
-    acc.count += 1;
-    avgByStudent.set(g.student_id, acc);
-  }
-
   return (students ?? []).map((s) => {
-    const acc = avgByStudent.get(s.id);
     return {
       id: s.id,
       name: s.full_name,
       nisn: s.nisn as string | null,
       classId: s.class_id as string | null,
       className: (s.classes as unknown as { name: string } | null)?.name ?? null,
-      avg: acc ? round2(acc.sum / acc.count) : null,
     };
   });
 }
 
-export async function listTeachersWithStats() {
+export async function listTeachersWithTeaching() {
   const supabase = await createClient();
   const { data: teachers } = await supabase
     .from("profiles")
@@ -39,15 +27,11 @@ export async function listTeachersWithStats() {
     .eq("role", "teacher")
     .order("full_name");
 
-  const [{ data: cts }, { data: materials }, { data: assignments }] = await Promise.all([
-    supabase
-      .from("class_teacher_subjects")
-      .select(
-        "teacher_id, subjects(name), classes(name, academic_years(year_label, semester, is_active))",
-      ),
-    supabase.from("materials").select("teacher_id"),
-    supabase.from("assignments").select("teacher_id"),
-  ]);
+  const { data: cts } = await supabase
+    .from("class_teacher_subjects")
+    .select(
+      "teacher_id, subjects(name), classes(name, academic_years(year_label, semester, is_active))",
+    );
 
   const teachingByTeacher = new Map<
     string,
@@ -73,17 +57,6 @@ export async function listTeachersWithStats() {
     });
     teachingByTeacher.set(row.teacher_id, list);
   }
-  const countBy = (rows: { teacher_id: string | null }[] | null | undefined) => {
-    const m = new Map<string, number>();
-    for (const r of rows ?? []) {
-      if (!r.teacher_id) continue;
-      m.set(r.teacher_id, (m.get(r.teacher_id) ?? 0) + 1);
-    }
-    return m;
-  };
-  const materialCount = countBy(materials);
-  const assignmentCount = countBy(assignments);
-
   return (teachers ?? []).map((t) => {
     const teaching = (teachingByTeacher.get(t.id) ?? []).sort(
       (a, b) =>
@@ -95,10 +68,7 @@ export async function listTeachersWithStats() {
       id: t.id,
       name: t.full_name,
       nip: t.nip as string | null,
-      subject: teaching[0]?.subjectName ?? "-",
       teaching,
-      materials: materialCount.get(t.id) ?? 0,
-      quizzes: assignmentCount.get(t.id) ?? 0,
     };
   });
 }
@@ -126,12 +96,4 @@ export async function listAllUsersForReset() {
     role: p.role as string,
     identifier: p.nisn?.trim() || p.nip?.trim() || null,
   }));
-}
-
-export async function countUsersByRole() {
-  const supabase = await createClient();
-  const { data } = await supabase.from("profiles").select("role");
-  const counts = { student: 0, teacher: 0, principal: 0, admin: 0 };
-  for (const row of data ?? []) counts[row.role as keyof typeof counts]++;
-  return counts;
 }

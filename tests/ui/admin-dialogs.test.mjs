@@ -718,7 +718,7 @@ test("unplaced student can be assigned directly without move confirmation", asyn
   });
 });
 
-const teacher = { id: "t1", name: "Guru Uji", nip: "100", materials: 0, quizzes: 0, teaching: [] };
+const teacher = { id: "t1", name: "Guru Uji", nip: "100", teaching: [] };
 for (const [name, component, props, editLabel, actionName] of [
   ["student", StudentsPanel, { students, years, classes: classOptions }, "Edit", "updateStudent"],
   ["teacher", TeachersPanel, { teachers: [teacher] }, "Edit", "updateStaff"],

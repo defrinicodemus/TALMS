@@ -50,7 +50,13 @@ export function PublishAnnouncementForm() {
         </Select>
       </div>
       <Input name="title" className="rounded-none" placeholder="Judul pengumuman" required />
-      <Textarea name="body" className="rounded-none" placeholder="Isi pengumuman..." rows={6} required />
+      <Textarea
+        name="body"
+        className="rounded-none"
+        placeholder="Isi pengumuman..."
+        rows={6}
+        required
+      />
       <Button type="submit" className="w-full rounded-none" disabled={isPending}>
         {isPending ? "Menerbitkan..." : "Terbitkan"}
       </Button>

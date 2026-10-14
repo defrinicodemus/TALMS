@@ -1,8 +1,7 @@
 "use client";
 
-import { useState, useTransition } from "react";
+import { useRef, useState, useTransition } from "react";
 import { toast } from "sonner";
-import * as XLSX from "xlsx";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
@@ -24,7 +23,7 @@ import {
   AlertDialogTitle,
   AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
-import { Download, Eye, Lock, LockOpen } from "lucide-react";
+import { Download, Eye, Loader2, Lock, LockOpen } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { TeacherClassSubject } from "@/lib/data/teaching";
 import type { GradebookData, GradebookStudentRow } from "@/lib/data/gradebook";
@@ -45,23 +44,36 @@ export function GradebookManager({
   const [selectedKey, setSelectedKey] = useState(comboKey(combos[0].classId, combos[0].subjectId));
   const selectedCombo = combos.find((c) => comboKey(c.classId, c.subjectId) === selectedKey)!;
   const data = gradebookByKey[selectedKey];
+  const [isExporting, setIsExporting] = useState(false);
+  const exporting = useRef(false);
 
-  function handleExport() {
-    const rows = data.students.map((st) => {
-      const row: Record<string, string | number> = { "Nama Siswa": st.fullName };
-      for (const tp of data.tpColumns) {
-        row[`Nilai ${tp.title}`] = st.tpAverages[tp.id] ?? "-";
-      }
-      row["Nilai Akhir"] = st.finalGrade ?? "-";
-      return row;
-    });
-    const worksheet = XLSX.utils.json_to_sheet(rows);
-    const workbook = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(workbook, worksheet, "Nilai");
-    XLSX.writeFile(
-      workbook,
-      `Buku-Nilai-${selectedCombo.className}-${selectedCombo.subjectName}.xlsx`,
-    );
+  async function handleExport() {
+    if (!data.isLocked || exporting.current) return;
+    exporting.current = true;
+    setIsExporting(true);
+    try {
+      const XLSX = await import("xlsx");
+      const rows = data.students.map((st) => {
+        const row: Record<string, string | number> = { "Nama Siswa": st.fullName };
+        for (const tp of data.tpColumns) {
+          row[`Nilai ${tp.title}`] = st.tpAverages[tp.id] ?? "-";
+        }
+        row["Nilai Akhir"] = st.finalGrade ?? "-";
+        return row;
+      });
+      const worksheet = XLSX.utils.json_to_sheet(rows);
+      const workbook = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(workbook, worksheet, "Nilai");
+      await XLSX.writeFile(
+        workbook,
+        `Buku-Nilai-${selectedCombo.className}-${selectedCombo.subjectName}.xlsx`,
+      );
+    } catch {
+      toast.error("Ekspor Excel gagal. Coba lagi atau muat ulang halaman.");
+    } finally {
+      exporting.current = false;
+      setIsExporting(false);
+    }
   }
 
   return (
@@ -72,7 +84,7 @@ export function GradebookManager({
             <Label className="text-[clamp(0.6875rem,0.65rem+0.2cqw,0.8125rem)]">
               Kelas & Mata Pelajaran
             </Label>
-            <Select value={selectedKey} onValueChange={setSelectedKey}>
+            <Select value={selectedKey} onValueChange={setSelectedKey} disabled={isExporting}>
               <SelectTrigger className="mt-1 w-full text-[clamp(0.8125rem,0.76rem+0.22cqw,0.9375rem)]">
                 <SelectValue />
               </SelectTrigger>
@@ -89,12 +101,18 @@ export function GradebookManager({
             </Select>
           </div>
           <Button
+            type="button"
             className="rounded-md bg-emerald-700 text-[clamp(0.8125rem,0.76rem+0.22cqw,0.9375rem)] hover:bg-emerald-800"
-            disabled={!data.isLocked}
+            disabled={isExporting || !data.isLocked}
+            aria-busy={isExporting}
             onClick={handleExport}
           >
-            <Download className="mr-2 size-[clamp(0.875rem,0.8rem+0.4cqw,1.125rem)]" /> Ekspor ke
-            Excel
+            {isExporting ? (
+              <Loader2 className="mr-2 size-[clamp(0.875rem,0.8rem+0.4cqw,1.125rem)] animate-spin" />
+            ) : (
+              <Download className="mr-2 size-[clamp(0.875rem,0.8rem+0.4cqw,1.125rem)]" />
+            )}
+            {isExporting ? "Menyiapkan Excel…" : "Ekspor ke Excel"}
           </Button>
         </div>
       </Card>
