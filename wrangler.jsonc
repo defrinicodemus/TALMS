@@ -1,6 +1,6 @@
 {
   "$schema": "./node_modules/wrangler/config-schema.json",
-  "name": "lms-sekolah",
+  "name": "talms",
   "main": ".open-next/worker.js",
   "compatibility_date": "2026-10-14",
   "compatibility_flags": [
@@ -15,7 +15,7 @@
   "services": [
     {
       "binding": "WORKER_SELF_REFERENCE",
-      "service": "lms-sekolah"
+      "service": "talms"
     }
   ],
   "observability": {
