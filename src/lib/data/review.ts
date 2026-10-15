@@ -1,9 +1,11 @@
 import { createClient } from "@/lib/supabase/server";
+import { assignmentMethods } from "@/lib/assignmentConstants";
 
 export interface ReviewAssignmentRow {
   id: string;
   title: string;
   kind: string;
+  allowedMethods: ("text" | "photo")[];
   description: string | null;
   dueAt: string | null;
   learningObjectiveTitle: string | null;
@@ -21,7 +23,7 @@ export async function getReviewAssignments(
     supabase
       .from("assignments")
       .select(
-        "id, title, kind, description, due_at, learning_objective_id, learning_objectives(title)",
+        "id, title, kind, allowed_methods, description, due_at, learning_objective_id, learning_objectives(title)",
       )
       .eq("class_id", classId)
       .eq("subject_id", subjectId)
@@ -55,6 +57,7 @@ export async function getReviewAssignments(
     id: a.id,
     title: a.title,
     kind: a.kind,
+    allowedMethods: assignmentMethods(a.allowed_methods, a.kind),
     description: a.description,
     dueAt: a.due_at,
     learningObjectiveTitle:

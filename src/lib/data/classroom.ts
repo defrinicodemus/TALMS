@@ -1,4 +1,5 @@
 import { createClient } from "@/lib/supabase/server";
+import { assignmentMethods } from "@/lib/assignmentConstants";
 import { computeQuizStatus, type QuizStatus } from "@/lib/quizStatus";
 
 export type MaterialKind = "pdf" | "video" | "text" | "image" | "slideshow";
@@ -86,7 +87,7 @@ export async function getClassroomAssignments(
     learningObjectiveTitle:
       (a.learning_objectives as unknown as { title: string } | null)?.title ?? null,
     createdAt: a.created_at,
-    allowedMethods: (a.allowed_methods ?? []) as AssignmentMethod[],
+    allowedMethods: assignmentMethods(a.allowed_methods, a.kind),
     isPublished: a.is_published,
     attachmentImageUrl: a.attachment_image_url,
     attachmentImageName: a.attachment_image_name,

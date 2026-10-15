@@ -44,7 +44,13 @@ import { cn } from "@/lib/utils";
 import type { TeacherClassSubject } from "@/lib/data/teaching";
 import type { LearningObjectiveRow } from "@/lib/data/curriculum";
 import type { AssignmentMethod, AssignmentRow } from "@/lib/data/classroom";
-import { ASSIGNMENT_MAX_PHOTO_MB } from "@/lib/assignmentConstants";
+import {
+  ASSIGNMENT_MAX_PHOTO_MB,
+  ASSIGNMENT_PHOTO_TYPES,
+  formatAssignmentTime,
+  assignmentTimeInputs,
+} from "@/lib/assignmentConstants";
+import { validateFileUpload } from "@/lib/validateUpload";
 import {
   createAssignment,
   updateAssignment,
@@ -70,12 +76,16 @@ function methodIcon(methods: AssignmentMethod[]) {
   return FileText;
 }
 
-function formatDueDate(dueAt: string | null): string | null {
-  if (!dueAt) return null;
-  const d = new Date(dueAt);
-  const date = d.toLocaleDateString("id-ID", { day: "numeric", month: "long", year: "numeric" });
-  const time = d.toLocaleTimeString("id-ID", { hour: "2-digit", minute: "2-digit" });
-  return `${date}, ${time}`;
+function validatePhoto(file: File) {
+  const result = validateFileUpload(file, {
+    allowedTypes: ASSIGNMENT_PHOTO_TYPES,
+    maxSizeMB: ASSIGNMENT_MAX_PHOTO_MB,
+  });
+  if (!result.ok || !file.size) {
+    toast.error(result.ok ? "Pilih gambar yang tidak kosong." : result.message);
+    return false;
+  }
+  return true;
 }
 
 export function AssignmentsTab({
@@ -127,6 +137,7 @@ export function AssignmentsTab({
       </Card>
 
       <AddAssignmentCard
+        key={selectedKey}
         classId={selectedCombo.classId}
         subjectId={selectedCombo.subjectId}
         objectives={objectives}
@@ -231,13 +242,17 @@ function AddAssignmentCard({
     if (imageFile) formData.set("attachment_image", imageFile);
 
     startTransition(async () => {
-      const result = await createAssignment(formData);
-      if (result.ok) {
-        toast.success(result.message);
-        resetForm();
-        onToggle();
-      } else {
-        toast.error(result.message);
+      try {
+        const result = await createAssignment(formData);
+        if (result.ok) {
+          toast.success(result.message);
+          resetForm();
+          onToggle();
+        } else toast.error(result.message);
+      } catch {
+        toast.error(
+          "Penyimpanan belum dapat dikonfirmasi. Isian tetap tersedia; periksa daftar tugas sebelum mencoba lagi.",
+        );
       }
     });
   }
@@ -263,7 +278,13 @@ function AddAssignmentCard({
             untuk siswa.
           </p>
         </div>
-        <Button type="button" variant="outline" className="shrink-0 rounded-md" onClick={onToggle}>
+        <Button
+          type="button"
+          variant="outline"
+          className="shrink-0 rounded-md"
+          onClick={onToggle}
+          disabled={isPending}
+        >
           {isExpanded ? "Tutup Form" : "Buka Form"}
           {isExpanded ? (
             <ChevronUp className="ml-1.5 h-4 w-4" />
@@ -281,7 +302,7 @@ function AddAssignmentCard({
               Kurikulum.
             </p>
           ) : (
-            <form ref={formRef} className="space-y-4">
+            <form ref={formRef} className="space-y-4" inert={isPending} aria-busy={isPending}>
               {/* 1. Informasi Dasar Tugas */}
               <div className="grid gap-4 sm:grid-cols-2">
                 <div>
@@ -292,6 +313,7 @@ function AddAssignmentCard({
                     value={title}
                     onChange={(e) => setTitle(e.target.value)}
                     required
+                    maxLength={200}
                   />
                 </div>
                 <div>
@@ -326,7 +348,7 @@ function AddAssignmentCard({
               {/* 2. Pengaturan Pengumpulan */}
               <SectionCard
                 title="Pengaturan Pengumpulan"
-                description="Pilih satu atau lebih metode pengumpulan tugas."
+                description="Pilih metode yang diizinkan. Jika keduanya dipilih, siswa cukup mengirim teks atau satu foto."
               >
                 <div className="flex flex-wrap gap-4">
                   {(["text", "photo"] as AssignmentMethod[]).map((m) => (
@@ -341,13 +363,16 @@ function AddAssignmentCard({
                 </div>
                 {methods.includes("photo") && (
                   <p className="text-xs text-muted-foreground">
-                    Maksimal ukuran foto: {ASSIGNMENT_MAX_PHOTO_MB} MB (otomatis)
+                    Satu foto JPG, PNG, atau WebP, maksimal {ASSIGNMENT_MAX_PHOTO_MB} MB.
                   </p>
                 )}
               </SectionCard>
 
               {/* 3. Jadwal Tugas */}
-              <SectionCard title="Jadwal Tugas">
+              <SectionCard
+                title="Jadwal Tugas"
+                description="Semua waktu menggunakan WITA. Setelah tenggat, pengumpulan dan perubahan jawaban ditutup. Guru dapat memperpanjang tenggat lewat Edit."
+              >
                 <div className="grid gap-4 sm:grid-cols-2">
                   <div>
                     <Label>Batas Pengumpulan *</Label>
@@ -361,7 +386,7 @@ function AddAssignmentCard({
                     />
                   </div>
                   <div>
-                    <Label>Jam Batas Pengumpulan *</Label>
+                    <Label>Jam Batas Pengumpulan (WITA) *</Label>
                     <Input
                       name="due_time"
                       type="time"
@@ -377,7 +402,7 @@ function AddAssignmentCard({
               {/* 4. Lampiran Guru (Opsional) */}
               <SectionCard
                 title="Lampiran Guru (Opsional)"
-                description="Siswa bisa mengunduh lampiran ini sebelum mengerjakan. Maksimal 1 gambar."
+                description={`Siswa bisa membuka lampiran ini sebelum mengerjakan. Maksimal 1 gambar JPG, PNG, atau WebP, ${ASSIGNMENT_MAX_PHOTO_MB} MB.`}
               >
                 <input
                   ref={imageInputRef}
@@ -387,7 +412,7 @@ function AddAssignmentCard({
                   onChange={(e) => {
                     const selected = e.target.files?.[0] ?? null;
                     e.target.value = "";
-                    if (selected) setImageFile(selected);
+                    if (selected && validatePhoto(selected)) setImageFile(selected);
                   }}
                 />
                 {imageFile ? (
@@ -423,7 +448,7 @@ function AddAssignmentCard({
                   </div>
                   <div>
                     <span className="text-muted-foreground">Deadline: </span>
-                    {dueDateLabel ? `${dueDateLabel} - ${dueTime}` : "-"}
+                    {dueDateLabel ? `${dueDateLabel} - ${dueTime} WITA` : "-"}
                   </div>
                 </div>
               </div>
@@ -488,6 +513,9 @@ function AssignmentListItem({
   const [editing, setEditing] = useState(false);
   const [title, setTitle] = useState(assignment.title);
   const [description, setDescription] = useState(assignment.description ?? "");
+  const [dueDate, setDueDate] = useState(assignmentTimeInputs(assignment.dueAt).date);
+  const [dueTime, setDueTime] = useState(assignmentTimeInputs(assignment.dueAt).time);
+  const [imageFile, setImageFile] = useState<File | null>(null);
   const [learningObjectiveId, setLearningObjectiveId] = useState(
     assignment.learningObjectiveId ?? "",
   );
@@ -497,6 +525,9 @@ function AssignmentListItem({
     setEditing(false);
     setTitle(assignment.title);
     setDescription(assignment.description ?? "");
+    setDueDate(assignmentTimeInputs(assignment.dueAt).date);
+    setDueTime(assignmentTimeInputs(assignment.dueAt).time);
+    setImageFile(null);
     setLearningObjectiveId(assignment.learningObjectiveId ?? "");
     setEditorKey((k) => k + 1);
     onToggle();
@@ -508,48 +539,71 @@ function AssignmentListItem({
     formData.set("title", title);
     formData.set("description", description);
     formData.set("learning_objective_id", learningObjectiveId);
+    if (dueDate || assignment.dueAt) {
+      formData.set("due_date", dueDate);
+      formData.set("due_time", dueTime);
+    }
+    if (imageFile) formData.set("attachment_image", imageFile);
     startTransition(async () => {
-      const result = await updateAssignment(formData);
-      if (result.ok) {
-        toast.success(result.message);
-        setEditing(false);
-      } else {
-        toast.error(result.message);
+      try {
+        const result = await updateAssignment(formData);
+        if (result.ok) {
+          toast.success(result.message);
+          setEditing(false);
+          setImageFile(null);
+        } else toast.error(result.message);
+      } catch {
+        toast.error(
+          "Perubahan belum dapat dikonfirmasi. Isian tetap tersedia; muat ulang untuk memeriksa.",
+        );
       }
     });
   }
 
   function handleDelete() {
     startTransition(async () => {
-      const result = await deleteAssignment(assignment.id);
-      if (result.ok) toast.success(result.message);
-      else toast.error(result.message);
+      try {
+        const result = await deleteAssignment(assignment.id);
+        if (result.ok) toast.success(result.message);
+        else toast.error(result.message);
+      } catch {
+        toast.error("Penghapusan belum dapat dikonfirmasi. Muat ulang untuk memeriksa.");
+      }
     });
   }
 
   function handleToggleActive() {
     startTransition(async () => {
-      const result = await setAssignmentActive(assignment.id, !assignment.isPublished);
-      if (result.ok) toast.success(result.message);
-      else toast.error(result.message);
+      try {
+        const result = await setAssignmentActive(assignment.id, !assignment.isPublished);
+        if (result.ok) toast.success(result.message);
+        else toast.error(result.message);
+      } catch {
+        toast.error("Status tugas belum dapat diperbarui. Coba lagi.");
+      }
     });
   }
 
   function handleRemoveAttachmentImage() {
     startTransition(async () => {
-      const result = await removeAssignmentAttachmentImage(assignment.id);
-      if (result.ok) toast.success(result.message);
-      else toast.error(result.message);
+      try {
+        const result = await removeAssignmentAttachmentImage(assignment.id);
+        if (result.ok) toast.success(result.message);
+        else toast.error(result.message);
+      } catch {
+        toast.error("Lampiran belum dapat dihapus. Coba lagi.");
+      }
     });
   }
 
-  const dueLabel = formatDueDate(assignment.dueAt);
+  const dueLabel = formatAssignmentTime(assignment.dueAt);
 
   return (
     <div className="@container rounded-md border">
       <button
         type="button"
         onClick={handleToggle}
+        disabled={isPending}
         className="flex w-full items-center gap-2 p-3 text-left hover:bg-muted/40"
       >
         <div className="grid h-8 w-8 shrink-0 place-items-center rounded-md bg-primary-soft/50 @sm:h-9 @sm:w-9">
@@ -591,10 +645,15 @@ function AssignmentListItem({
       <ExpandRegion expanded={isExpanded}>
         <div className="space-y-3 border-t p-4">
           {editing ? (
-            <div className="space-y-3">
+            <div className="space-y-3" inert={isPending} aria-busy={isPending}>
               <div>
                 <Label>Judul Tugas</Label>
-                <Input value={title} onChange={(e) => setTitle(e.target.value)} className="mt-1" />
+                <Input
+                  value={title}
+                  onChange={(e) => setTitle(e.target.value)}
+                  className="mt-1"
+                  maxLength={200}
+                />
               </div>
               <div>
                 <Label>Tujuan Pembelajaran (TP)</Label>
@@ -623,6 +682,53 @@ function AssignmentListItem({
                     onChange={setDescription}
                   />
                 </div>
+              </div>
+              <div className="grid gap-3 sm:grid-cols-2">
+                <div>
+                  <Label>Batas Pengumpulan</Label>
+                  <Input
+                    type="date"
+                    value={dueDate}
+                    onChange={(e) => setDueDate(e.target.value)}
+                    className="mt-1"
+                  />
+                </div>
+                <div>
+                  <Label>Jam Batas (WITA)</Label>
+                  <Input
+                    type="time"
+                    value={dueTime}
+                    onChange={(e) => setDueTime(e.target.value)}
+                    className="mt-1"
+                  />
+                </div>
+              </div>
+              <p className="text-xs text-muted-foreground">
+                Perpanjang tenggat untuk membuka kembali pengumpulan. Jawaban yang sudah dinilai
+                tetap terkunci.
+              </p>
+              <div className="space-y-2">
+                <Label>
+                  {assignment.attachmentImageUrl ? "Ganti Lampiran Guru" : "Tambah Lampiran Guru"}
+                </Label>
+                <Input
+                  type="file"
+                  accept={ASSIGNMENT_PHOTO_TYPES.join(",")}
+                  onChange={(e) => {
+                    const file = e.target.files?.[0];
+                    e.target.value = "";
+                    if (file && validatePhoto(file)) setImageFile(file);
+                  }}
+                />
+                <p className="text-xs text-muted-foreground">
+                  Maksimal {ASSIGNMENT_MAX_PHOTO_MB} MB. Lampiran lama dipertahankan sampai
+                  perubahan berhasil disimpan.
+                </p>
+                {imageFile && (
+                  <ul>
+                    <PendingFileRow name={imageFile.name} onRemove={() => setImageFile(null)} />
+                  </ul>
+                )}
               </div>
             </div>
           ) : (
@@ -660,14 +766,34 @@ function AssignmentListItem({
                           {assignment.attachmentImageName ?? "Lampiran"}
                         </span>
                       </a>
-                      <button
-                        type="button"
-                        onClick={handleRemoveAttachmentImage}
-                        className="shrink-0 text-muted-foreground hover:text-destructive"
-                        aria-label="Hapus lampiran"
-                      >
-                        <X className="h-3.5 w-3.5" />
-                      </button>
+                      <AlertDialog>
+                        <AlertDialogTrigger asChild>
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="icon"
+                            disabled={isPending}
+                            aria-label="Hapus lampiran"
+                          >
+                            <X className="h-3.5 w-3.5" />
+                          </Button>
+                        </AlertDialogTrigger>
+                        <AlertDialogContent>
+                          <AlertDialogHeader>
+                            <AlertDialogTitle>Hapus lampiran guru?</AlertDialogTitle>
+                            <AlertDialogDescription>
+                              Lampiran tidak lagi ditampilkan pada tugas. Jawaban siswa tetap
+                              tersimpan.
+                            </AlertDialogDescription>
+                          </AlertDialogHeader>
+                          <AlertDialogFooter>
+                            <AlertDialogCancel>Batal</AlertDialogCancel>
+                            <AlertDialogAction onClick={handleRemoveAttachmentImage}>
+                              Hapus Lampiran
+                            </AlertDialogAction>
+                          </AlertDialogFooter>
+                        </AlertDialogContent>
+                      </AlertDialog>
                     </li>
                   </ul>
                 </div>
@@ -676,6 +802,25 @@ function AssignmentListItem({
           )}
 
           <div className="flex flex-wrap gap-2">
+            {editing && (
+              <Button
+                size="sm"
+                variant="outline"
+                disabled={isPending}
+                onClick={() => {
+                  setEditing(false);
+                  setTitle(assignment.title);
+                  setDescription(assignment.description ?? "");
+                  setLearningObjectiveId(assignment.learningObjectiveId ?? "");
+                  setDueDate(assignmentTimeInputs(assignment.dueAt).date);
+                  setDueTime(assignmentTimeInputs(assignment.dueAt).time);
+                  setImageFile(null);
+                  setEditorKey((k) => k + 1);
+                }}
+              >
+                Batal Edit
+              </Button>
+            )}
             {editing ? (
               <Button
                 size="sm"
@@ -690,7 +835,12 @@ function AssignmentListItem({
                 size="sm"
                 variant="outline"
                 className="rounded-md"
-                onClick={() => setEditing(true)}
+                disabled={isPending}
+                onClick={() => {
+                  setDueDate(assignmentTimeInputs(assignment.dueAt).date);
+                  setDueTime(assignmentTimeInputs(assignment.dueAt).time);
+                  setEditing(true);
+                }}
               >
                 Edit
               </Button>
@@ -699,7 +849,7 @@ function AssignmentListItem({
               size="sm"
               variant="outline"
               className="rounded-md"
-              disabled={isPending}
+              disabled={isPending || editing}
               onClick={handleToggleActive}
             >
               {assignment.isPublished ? (
@@ -714,7 +864,12 @@ function AssignmentListItem({
             </Button>
             <AlertDialog>
               <AlertDialogTrigger asChild>
-                <Button size="sm" variant="outline" className="rounded-md text-destructive">
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="rounded-md text-destructive"
+                  disabled={isPending || editing}
+                >
                   <Trash2 className="mr-1.5 h-4 w-4" /> Hapus
                 </Button>
               </AlertDialogTrigger>
@@ -733,6 +888,10 @@ function AssignmentListItem({
               </AlertDialogContent>
             </AlertDialog>
           </div>
+          <p className="text-xs text-muted-foreground">
+            Nonaktifkan menyembunyikan tugas dari siswa. Untuk menutup pengumpulan sambil tetap
+            menampilkan jawaban dan nilai, gunakan tenggat.
+          </p>
         </div>
       </ExpandRegion>
     </div>

@@ -113,6 +113,10 @@ function setup(options = {}) {
       }),
     },
   };
+  // The shared actions module also imports task-only helpers. Quiz tests must
+  // never invoke their upload/validation path.
+  modules["@/lib/assignmentConstants"] = {};
+  modules["@/lib/assignmentFiles"] = {};
   function evaluate(code) {
     const exports = {};
     const require = (name) => {

@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { RichTextEditor } from "@/components/RichTextEditor";
+import { MaterialMedia } from "@/components/MaterialMedia";
 import { ExpandRegion } from "@/components/ExpandRegion";
 import {
   Select,
@@ -39,7 +40,8 @@ import {
   Eye,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { extractYoutubeId, extractGoogleSlidesId } from "@/lib/materialEmbeds";
+import { getMaterialMediaUrl, SLIDESHOW_LINK_ERROR } from "@/lib/materialEmbeds";
+import { MATERIAL_UPLOAD, validateMaterialFile } from "@/lib/validateUpload";
 import { richTextIsEmpty } from "@/lib/richTextEmpty";
 import type { TeacherClassSubject } from "@/lib/data/teaching";
 import type { LearningObjectiveRow } from "@/lib/data/curriculum";
@@ -117,6 +119,7 @@ export function MaterialsTab({
       </Card>
 
       <AddMaterialCard
+        key={selectedKey}
         classId={selectedCombo.classId}
         subjectId={selectedCombo.subjectId}
         objectives={objectives}
@@ -148,68 +151,55 @@ function EmptyPreviewHint({ text }: { text: string }) {
   return <p className="px-2 py-8 text-center text-xs text-muted-foreground">{text}</p>;
 }
 
-function LivePreview({
-  kind,
-  youtubeId,
-  slidesId,
-  filePreviewUrl,
-}: {
-  kind: MaterialKind;
-  youtubeId: string | null;
-  slidesId: string | null;
-  filePreviewUrl: string | null;
-}) {
-  if (kind === "video") {
-    return youtubeId ? (
-      <div className="aspect-video w-full overflow-hidden rounded-md">
-        <iframe
-          src={`https://www.youtube.com/embed/${youtubeId}`}
-          className="h-full w-full"
-          allowFullScreen
-          title="Pratinjau video"
-        />
-      </div>
-    ) : (
-      <EmptyPreviewHint text="Masukkan tautan YouTube yang valid untuk melihat pratinjau." />
-    );
+function useFilePreview(file: File | null) {
+  const [url, setUrl] = useState<string | null>(null);
+  useEffect(() => {
+    if (!file) {
+      setUrl(null);
+      return;
+    }
+    const objectUrl = URL.createObjectURL(file);
+    setUrl(objectUrl);
+    return () => URL.revokeObjectURL(objectUrl);
+  }, [file]);
+  return url;
+}
+
+function selectMaterialFile(input: HTMLInputElement, kind: "pdf" | "image") {
+  const file = input.files?.[0] ?? null;
+  if (file) {
+    const result = validateMaterialFile(file, kind);
+    if (!result.ok) {
+      toast.error(result.message);
+      input.value = "";
+      return null;
+    }
   }
-  if (kind === "slideshow") {
-    return slidesId ? (
-      <div className="aspect-video w-full overflow-hidden rounded-md">
-        <iframe
-          src={`https://docs.google.com/presentation/d/${slidesId}/embed`}
-          className="h-full w-full"
-          allowFullScreen
-          title="Pratinjau slideshow"
-        />
-      </div>
-    ) : (
-      <EmptyPreviewHint text="Masukkan tautan Google Slides yang valid untuk melihat pratinjau." />
-    );
-  }
-  if (kind === "image") {
-    return filePreviewUrl ? (
-      <img
-        src={filePreviewUrl}
-        alt="Pratinjau gambar"
-        className="max-h-64 w-full rounded-md object-contain"
-      />
-    ) : (
-      <EmptyPreviewHint text="Pilih gambar untuk melihat pratinjau." />
-    );
-  }
-  if (kind === "pdf") {
-    return filePreviewUrl ? (
-      <iframe
-        src={filePreviewUrl}
-        className="h-64 w-full rounded-md border"
-        title="Pratinjau PDF"
-      />
-    ) : (
-      <EmptyPreviewHint text="Pilih file PDF untuk melihat pratinjau." />
-    );
-  }
-  return null;
+  return file;
+}
+
+function FileHint({ kind }: { kind: "pdf" | "image" }) {
+  return (
+    <p className="mt-1 text-xs text-muted-foreground">
+      {kind === "pdf" ? "PDF" : "PNG, JPG, atau WebP"}, maksimal {MATERIAL_UPLOAD[kind].maxSizeMB}{" "}
+      MB per file.
+    </p>
+  );
+}
+
+function SlideshowLinkHint() {
+  return (
+    <div className="mt-1 space-y-1 text-xs text-muted-foreground">
+      <p>
+        Google Slides: gunakan tautan yang dapat dilihat siapa saja atau dari “Publikasikan ke web”.
+      </p>
+      <p>
+        Canva: buka Bagikan → Lihat semua → Sematkan (Embed), lalu salin smart embed link. Tempel
+        tautannya, bukan kode HTML atau tautan edit.
+      </p>
+      <p>Pastikan presentasi dapat dibuka siswa tanpa meminta akses.</p>
+    </div>
+  );
 }
 
 function AddMaterialCard({
@@ -229,20 +219,10 @@ function AddMaterialCard({
   const [videoUrl, setVideoUrl] = useState("");
   const [slidesUrl, setSlidesUrl] = useState("");
   const [file, setFile] = useState<File | null>(null);
-  const [filePreviewUrl, setFilePreviewUrl] = useState<string | null>(null);
+  const filePreviewUrl = useFilePreview(file);
   const [isPending, startTransition] = useTransition();
   const [editorKey, setEditorKey] = useState(0);
   const formRef = useRef<HTMLFormElement>(null);
-
-  useEffect(() => {
-    if (!file) {
-      setFilePreviewUrl(null);
-      return;
-    }
-    const objectUrl = URL.createObjectURL(file);
-    setFilePreviewUrl(objectUrl);
-    return () => URL.revokeObjectURL(objectUrl);
-  }, [file]);
 
   function resetForm() {
     formRef.current?.reset();
@@ -262,21 +242,46 @@ function AddMaterialCard({
     formData.set("subject_id", subjectId);
     formData.set("kind", kind);
     formData.set("status", status);
+    if (!formData.get("learning_objective_id")) {
+      toast.error("Tujuan Pembelajaran (TP) wajib dipilih.");
+      return;
+    }
+    if (kind === "text" && richTextIsEmpty(String(formData.get("content") ?? ""))) {
+      toast.error("Isi materi teks wajib diisi.");
+      return;
+    }
+    if (
+      (kind === "video" || kind === "slideshow") &&
+      !getMaterialMediaUrl(kind, String(formData.get("url") ?? ""))
+    ) {
+      toast.error(kind === "video" ? "Tautan YouTube tidak valid." : SLIDESHOW_LINK_ERROR);
+      return;
+    }
     startTransition(async () => {
-      const result = await createMaterial(formData);
-      if (result.ok) {
-        toast.success(result.message);
-        resetForm();
-        onToggle();
-      } else {
-        toast.error(result.message);
+      try {
+        const result = await createMaterial(formData);
+        if (result.ok) {
+          toast.success(result.message);
+          resetForm();
+          onToggle();
+        } else {
+          toast.error(result.message);
+        }
+      } catch {
+        toast.error(
+          "Materi belum berhasil disimpan. Periksa koneksi dan coba lagi; isian tetap tersedia.",
+        );
       }
     });
   }
 
   const noObjectives = objectives.length === 0;
-  const youtubeId = kind === "video" ? extractYoutubeId(videoUrl) : null;
-  const slidesId = kind === "slideshow" ? extractGoogleSlidesId(slidesUrl) : null;
+  const previewUrl =
+    kind === "video"
+      ? getMaterialMediaUrl(kind, videoUrl)
+      : kind === "slideshow"
+        ? getMaterialMediaUrl(kind, slidesUrl)
+        : filePreviewUrl;
 
   return (
     <Card className="@container overflow-hidden rounded-md border-0 shadow-soft">
@@ -290,7 +295,14 @@ function AddMaterialCard({
             YouTube, dan slideshow presentasi.
           </p>
         </div>
-        <Button type="button" variant="outline" className="shrink-0 rounded-md" onClick={onToggle}>
+        <Button
+          type="button"
+          variant="outline"
+          className="shrink-0 rounded-md"
+          onClick={onToggle}
+          disabled={isPending}
+          aria-expanded={isExpanded}
+        >
           {isExpanded ? "Tutup Form" : "Buka Form"}
           {isExpanded ? (
             <ChevronUp className="ml-1.5 h-4 w-4" />
@@ -308,139 +320,180 @@ function AddMaterialCard({
               Kurikulum.
             </p>
           ) : (
-            <form ref={formRef} className="space-y-4">
-              <div className="grid gap-4 sm:grid-cols-2">
+            <form
+              key={editorKey}
+              ref={formRef}
+              onSubmit={(e) => {
+                e.preventDefault();
+                handleSubmit("draft");
+              }}
+            >
+              <fieldset disabled={isPending} className="min-w-0 space-y-4">
+                <div className="grid gap-4 sm:grid-cols-2">
+                  <div>
+                    <Label>Jenis Materi</Label>
+                    <Select
+                      value={kind}
+                      onValueChange={(v) => {
+                        setKind(v as MaterialKind);
+                        setFile(null);
+                      }}
+                    >
+                      <SelectTrigger className="mt-1">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="text">Teks</SelectItem>
+                        <SelectItem value="pdf">PDF</SelectItem>
+                        <SelectItem value="image">Gambar</SelectItem>
+                        <SelectItem value="video">Video YouTube</SelectItem>
+                        <SelectItem value="slideshow">Slideshow Presentasi</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div>
+                    <Label>Judul</Label>
+                    <Input
+                      name="title"
+                      className="mt-1"
+                      required
+                      maxLength={200}
+                      placeholder="Contoh: Mengenal pecahan sederhana"
+                    />
+                  </div>
+                </div>
+
                 <div>
-                  <Label>Jenis Materi</Label>
-                  <Select value={kind} onValueChange={(v) => setKind(v as MaterialKind)}>
+                  <Label>Tujuan Pembelajaran (TP)</Label>
+                  <Select name="learning_objective_id" required>
                     <SelectTrigger className="mt-1">
-                      <SelectValue />
+                      <SelectValue placeholder="Pilih TP" />
                     </SelectTrigger>
                     <SelectContent>
-                      <SelectItem value="text">Teks</SelectItem>
-                      <SelectItem value="pdf">PDF</SelectItem>
-                      <SelectItem value="image">Gambar</SelectItem>
-                      <SelectItem value="video">Video YouTube</SelectItem>
-                      <SelectItem value="slideshow">Slideshow Presentasi</SelectItem>
+                      {objectives.map((o) => (
+                        <SelectItem key={o.id} value={o.id}>
+                          {o.title}
+                        </SelectItem>
+                      ))}
                     </SelectContent>
                   </Select>
-                </div>
-                <div>
-                  <Label>Judul</Label>
-                  <Input name="title" className="mt-1" required />
-                </div>
-              </div>
-
-              <div>
-                <Label>Tujuan Pembelajaran (TP)</Label>
-                <Select name="learning_objective_id" required>
-                  <SelectTrigger className="mt-1">
-                    <SelectValue placeholder="Pilih TP" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {objectives.map((o) => (
-                      <SelectItem key={o.id} value={o.id}>
-                        {o.title}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-
-              {kind === "text" && (
-                <div>
-                  <Label>Isi Materi</Label>
-                  <div className="mt-1">
-                    <RichTextEditor
-                      key={editorKey}
-                      name="content"
-                      placeholder="Tulis materi pelajaran Anda di sini..."
-                    />
-                  </div>
-                </div>
-              )}
-              {kind === "video" && (
-                <div>
-                  <Label>Tautan YouTube</Label>
-                  <Input
-                    name="url"
-                    placeholder="https://youtube.com/watch?v=..."
-                    className="mt-1"
-                    value={videoUrl}
-                    onChange={(e) => setVideoUrl(e.target.value)}
-                    required
-                  />
                   <p className="mt-1 text-xs text-muted-foreground">
-                    Video akan ditampilkan langsung di halaman, siswa tidak perlu buka YouTube.
+                    Pilih TP yang sesuai agar materi terhubung dengan alur pembelajaran siswa.
                   </p>
                 </div>
-              )}
-              {kind === "slideshow" && (
-                <div>
-                  <Label>Tautan Google Slides</Label>
-                  <Input
-                    name="url"
-                    placeholder="https://docs.google.com/presentation/d/xxxx"
-                    className="mt-1"
-                    value={slidesUrl}
-                    onChange={(e) => setSlidesUrl(e.target.value)}
-                    required
-                  />
-                  <p className="mt-1 text-xs text-muted-foreground">
-                    Gunakan tautan Google Slides yang telah dipublikasikan agar dapat ditampilkan
-                    kepada siswa.
-                  </p>
-                </div>
-              )}
-              {(kind === "pdf" || kind === "image") && (
-                <div>
-                  <Label>Unggah {kind === "pdf" ? "PDF" : "Gambar"}</Label>
-                  <Input
-                    name="file"
-                    type="file"
-                    accept={kind === "pdf" ? "application/pdf" : "image/png,image/jpeg,image/webp"}
-                    className="mt-1"
-                    onChange={(e) => setFile(e.target.files?.[0] ?? null)}
-                    required
-                  />
-                </div>
-              )}
 
-              {kind !== "text" && (
-                <div>
-                  <Label className="text-xs uppercase tracking-wider text-muted-foreground">
-                    Pratinjau
-                  </Label>
-                  <div className="mt-2 rounded-md border bg-muted/20 p-3">
-                    <LivePreview
-                      kind={kind}
-                      youtubeId={youtubeId}
-                      slidesId={slidesId}
-                      filePreviewUrl={filePreviewUrl}
-                    />
+                {kind === "text" && (
+                  <div>
+                    <Label>Isi Materi</Label>
+                    <div className="mt-1">
+                      <RichTextEditor
+                        key={editorKey}
+                        name="content"
+                        placeholder="Tulis materi pelajaran Anda di sini..."
+                      />
+                    </div>
                   </div>
-                </div>
-              )}
+                )}
+                {kind === "video" && (
+                  <div>
+                    <Label>Tautan YouTube</Label>
+                    <Input
+                      name="url"
+                      placeholder="https://youtube.com/watch?v=..."
+                      className="mt-1"
+                      value={videoUrl}
+                      onChange={(e) => setVideoUrl(e.target.value)}
+                      required
+                    />
+                    <p className="mt-1 text-xs text-muted-foreground">
+                      Gunakan tautan video YouTube yang dapat diakses siswa, tanpa pembatasan
+                      privat.
+                    </p>
+                  </div>
+                )}
+                {kind === "slideshow" && (
+                  <div>
+                    <Label>Tautan Google Slides atau Canva</Label>
+                    <Input
+                      name="url"
+                      placeholder="Tempel tautan presentasi Google Slides atau Canva"
+                      className="mt-1"
+                      value={slidesUrl}
+                      onChange={(e) => setSlidesUrl(e.target.value)}
+                      required
+                    />
+                    <SlideshowLinkHint />
+                  </div>
+                )}
+                {(kind === "pdf" || kind === "image") && (
+                  <div>
+                    <Label>Unggah {kind === "pdf" ? "PDF" : "Gambar"}</Label>
+                    <Input
+                      key={kind}
+                      name="file"
+                      type="file"
+                      accept={
+                        kind === "pdf" ? "application/pdf" : "image/png,image/jpeg,image/webp"
+                      }
+                      className="mt-1"
+                      onChange={(e) => setFile(selectMaterialFile(e.target, kind))}
+                      required
+                    />
+                    <FileHint kind={kind} />
+                    {file && <p className="mt-1 break-all text-xs">Dipilih: {file.name}</p>}
+                  </div>
+                )}
 
-              <div className="flex flex-wrap justify-end gap-2 pt-2">
-                <Button
-                  type="button"
-                  variant="secondary"
-                  className="rounded-md"
-                  disabled={isPending}
-                  onClick={() => handleSubmit("draft")}
-                >
-                  {isPending ? "Menyimpan..." : "Simpan Draft"}
-                </Button>
-                <Button
-                  type="button"
-                  className="rounded-md"
-                  disabled={isPending}
-                  onClick={() => handleSubmit("published")}
-                >
-                  {isPending ? "Menyimpan..." : "Publikasikan Materi"}
-                </Button>
-              </div>
+                {kind !== "text" && isExpanded && (
+                  <div>
+                    <Label className="text-xs uppercase tracking-wider text-muted-foreground">
+                      Pratinjau
+                    </Label>
+                    <div className="mt-2 rounded-md border bg-muted/20 p-3">
+                      {previewUrl ? (
+                        <MaterialMedia
+                          key={previewUrl}
+                          kind={kind}
+                          url={previewUrl}
+                          title="Pratinjau materi"
+                          compact
+                        />
+                      ) : (
+                        <EmptyPreviewHint
+                          text={
+                            kind === "video" || kind === "slideshow"
+                              ? "Masukkan tautan yang valid untuk menyiapkan pratinjau."
+                              : "Pilih file untuk menyiapkan pratinjau."
+                          }
+                        />
+                      )}
+                    </div>
+                  </div>
+                )}
+
+                <p className="text-xs text-muted-foreground">
+                  Draf belum terlihat oleh siswa. Publikasikan saat materi siap dipelajari.
+                </p>
+                <div className="flex flex-wrap justify-end gap-2 pt-2">
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    className="rounded-md"
+                    disabled={isPending}
+                    onClick={() => handleSubmit("draft")}
+                  >
+                    {isPending ? "Menyimpan..." : "Simpan Draft"}
+                  </Button>
+                  <Button
+                    type="button"
+                    className="rounded-md"
+                    disabled={isPending}
+                    onClick={() => handleSubmit("published")}
+                  >
+                    {isPending ? "Menyimpan..." : "Publikasikan Materi"}
+                  </Button>
+                </div>
+              </fieldset>
             </form>
           )}
         </div>
@@ -469,13 +522,24 @@ function MaterialListItem({
   );
   const [content, setContent] = useState(material.content ?? "");
   const [editorKey, setEditorKey] = useState(0);
+  const [url, setUrl] = useState(material.url ?? "");
+  const [file, setFile] = useState<File | null>(null);
+  const filePreviewUrl = useFilePreview(file);
+  const fileRef = useRef<HTMLInputElement>(null);
 
-  function handleToggle() {
-    setEditing(false);
+  function resetEdit() {
     setTitle(material.title);
     setLearningObjectiveId(material.learningObjectiveId ?? "");
     setContent(material.content ?? "");
+    setUrl(material.url ?? "");
+    setFile(null);
+    if (fileRef.current) fileRef.current.value = "";
     setEditorKey((k) => k + 1);
+  }
+
+  function handleToggle() {
+    setEditing(false);
+    resetEdit();
     onToggle();
   }
 
@@ -487,13 +551,30 @@ function MaterialListItem({
     if (material.kind === "text") {
       formData.set("content", content);
     }
+    if (material.kind === "video" || material.kind === "slideshow") {
+      if (!getMaterialMediaUrl(material.kind, url)) {
+        toast.error(
+          material.kind === "video" ? "Tautan YouTube tidak valid." : SLIDESHOW_LINK_ERROR,
+        );
+        return;
+      }
+      formData.set("url", url);
+    }
+    if (file) formData.set("file", file);
     startTransition(async () => {
-      const result = await updateMaterial(formData);
-      if (result.ok) {
-        toast.success(result.message);
-        setEditing(false);
-      } else {
-        toast.error(result.message);
+      try {
+        const result = await updateMaterial(formData);
+        if (result.ok) {
+          toast.success(result.message);
+          setEditing(false);
+          setFile(null);
+        } else {
+          toast.error(result.message);
+        }
+      } catch {
+        toast.error(
+          "Perubahan belum berhasil disimpan. Periksa koneksi dan coba lagi; isian tetap tersedia.",
+        );
       }
     });
   }
@@ -519,6 +600,8 @@ function MaterialListItem({
       <button
         type="button"
         onClick={handleToggle}
+        disabled={isPending}
+        aria-expanded={isExpanded}
         className="flex w-full items-center gap-2 p-3 text-left hover:bg-muted/40"
       >
         <div className="grid h-8 w-8 shrink-0 place-items-center rounded-md bg-primary-soft/50 @sm:h-9 @sm:w-9">
@@ -550,13 +633,19 @@ function MaterialListItem({
 
       <ExpandRegion expanded={isExpanded}>
         <div className="space-y-3 border-t p-4">
-          {!(editing && material.kind === "text") && <MaterialPreview material={material} />}
+          {isExpanded && !editing && <MaterialPreview material={material} />}
 
           {editing ? (
-            <div className="space-y-3">
+            <fieldset disabled={isPending} className="min-w-0 space-y-3">
               <div>
                 <Label>Judul</Label>
-                <Input value={title} onChange={(e) => setTitle(e.target.value)} className="mt-1" />
+                <Input
+                  value={title}
+                  onChange={(e) => setTitle(e.target.value)}
+                  className="mt-1"
+                  required
+                  maxLength={200}
+                />
               </div>
               <div>
                 <Label>Tujuan Pembelajaran (TP)</Label>
@@ -586,7 +675,75 @@ function MaterialListItem({
                   </div>
                 </div>
               )}
-            </div>
+              {(material.kind === "video" || material.kind === "slideshow") && (
+                <div>
+                  <Label>
+                    {material.kind === "video"
+                      ? "Tautan YouTube"
+                      : "Tautan Google Slides atau Canva"}
+                  </Label>
+                  <Input
+                    value={url}
+                    onChange={(e) => setUrl(e.target.value)}
+                    className="mt-1"
+                    required
+                  />
+                  {material.kind === "slideshow" && <SlideshowLinkHint />}
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    Gunakan tautan yang dapat diakses siswa. Perubahan tautan disimpan setelah
+                    menekan Simpan Perubahan.
+                  </p>
+                </div>
+              )}
+              {(material.kind === "pdf" || material.kind === "image") && (
+                <div>
+                  <Label>Ganti lampiran (opsional)</Label>
+                  <Input
+                    ref={fileRef}
+                    type="file"
+                    className="mt-1"
+                    accept={MATERIAL_UPLOAD[material.kind].allowedTypes.join(",")}
+                    onChange={(e) =>
+                      setFile(selectMaterialFile(e.target, material.kind as "pdf" | "image"))
+                    }
+                  />
+                  <FileHint kind={material.kind} />
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    Tanpa memilih file baru, lampiran saat ini tetap digunakan.
+                  </p>
+                  {file && (
+                    <div className="mt-2 flex flex-wrap items-center gap-2 text-xs">
+                      <span className="break-all">Pengganti: {file.name}</span>
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="ghost"
+                        onClick={() => {
+                          setFile(null);
+                          if (fileRef.current) fileRef.current.value = "";
+                        }}
+                      >
+                        Batalkan penggantian
+                      </Button>
+                    </div>
+                  )}
+                </div>
+              )}
+              {isExpanded && material.kind !== "text" && (filePreviewUrl || url) && (
+                <div className="space-y-2 rounded-md border p-3">
+                  <p className="text-xs font-medium text-muted-foreground">
+                    {file ? "Pratinjau lampiran pengganti" : "Pratinjau materi"}
+                  </p>
+                  <MaterialMedia
+                    key={filePreviewUrl ?? url}
+                    kind={material.kind}
+                    url={filePreviewUrl ?? url}
+                    title={title}
+                    compact
+                  />
+                </div>
+              )}
+            </fieldset>
           ) : (
             <div className="text-sm text-muted-foreground">
               Diunggah{" "}
@@ -600,63 +757,93 @@ function MaterialListItem({
 
           <div className="flex flex-wrap gap-2">
             {editing ? (
-              <Button
-                size="sm"
-                className="rounded-md"
-                disabled={
-                  isPending ||
-                  !title.trim() ||
-                  !learningObjectiveId ||
-                  (material.kind === "text" && richTextIsEmpty(content))
-                }
-                onClick={handleSaveChanges}
-              >
-                {isPending ? "Menyimpan..." : "Simpan Perubahan"}
-              </Button>
+              <>
+                <Button
+                  size="sm"
+                  className="rounded-md"
+                  disabled={
+                    isPending ||
+                    !title.trim() ||
+                    !learningObjectiveId ||
+                    (material.kind === "text" && richTextIsEmpty(content))
+                  }
+                  onClick={handleSaveChanges}
+                >
+                  {isPending ? "Menyimpan..." : "Simpan Perubahan"}
+                </Button>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  disabled={isPending}
+                  onClick={() => {
+                    resetEdit();
+                    setEditing(false);
+                  }}
+                >
+                  Batal
+                </Button>
+              </>
             ) : (
               <Button
                 size="sm"
                 variant="outline"
                 className="rounded-md"
-                onClick={() => setEditing(true)}
+                disabled={isPending}
+                onClick={() => {
+                  resetEdit();
+                  setEditing(true);
+                }}
               >
                 Edit
               </Button>
             )}
-            <Button
-              size="sm"
-              variant="outline"
-              className="rounded-md"
-              disabled={isPending}
-              onClick={handleToggleActive}
-            >
-              {material.isActive ? (
-                <>
-                  <EyeOff className="mr-1.5 h-4 w-4" /> Nonaktifkan
-                </>
-              ) : (
-                <>
-                  <Eye className="mr-1.5 h-4 w-4" /> Aktifkan
-                </>
-              )}
-            </Button>
-            <AlertDialog>
-              <AlertDialogTrigger asChild>
-                <Button size="sm" variant="outline" className="rounded-md text-destructive">
-                  <Trash2 className="mr-1.5 h-4 w-4" /> Hapus
+            {!editing && (
+              <>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="rounded-md"
+                  disabled={isPending}
+                  onClick={handleToggleActive}
+                >
+                  {material.isActive ? (
+                    <>
+                      <EyeOff className="mr-1.5 h-4 w-4" /> Nonaktifkan
+                    </>
+                  ) : (
+                    <>
+                      <Eye className="mr-1.5 h-4 w-4" /> Aktifkan
+                    </>
+                  )}
                 </Button>
-              </AlertDialogTrigger>
-              <AlertDialogContent>
-                <AlertDialogHeader>
-                  <AlertDialogTitle>Hapus materi &quot;{material.title}&quot;?</AlertDialogTitle>
-                  <AlertDialogDescription>Aksi ini tidak bisa dibatalkan.</AlertDialogDescription>
-                </AlertDialogHeader>
-                <AlertDialogFooter>
-                  <AlertDialogCancel>Batal</AlertDialogCancel>
-                  <AlertDialogAction onClick={handleDelete}>Hapus</AlertDialogAction>
-                </AlertDialogFooter>
-              </AlertDialogContent>
-            </AlertDialog>
+                <AlertDialog>
+                  <AlertDialogTrigger asChild>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      className="rounded-md text-destructive"
+                      disabled={isPending}
+                    >
+                      <Trash2 className="mr-1.5 h-4 w-4" /> Hapus
+                    </Button>
+                  </AlertDialogTrigger>
+                  <AlertDialogContent>
+                    <AlertDialogHeader>
+                      <AlertDialogTitle>
+                        Hapus materi &quot;{material.title}&quot;?
+                      </AlertDialogTitle>
+                      <AlertDialogDescription>
+                        Aksi ini tidak bisa dibatalkan.
+                      </AlertDialogDescription>
+                    </AlertDialogHeader>
+                    <AlertDialogFooter>
+                      <AlertDialogCancel>Batal</AlertDialogCancel>
+                      <AlertDialogAction onClick={handleDelete}>Hapus</AlertDialogAction>
+                    </AlertDialogFooter>
+                  </AlertDialogContent>
+                </AlertDialog>
+              </>
+            )}
           </div>
         </div>
       </ExpandRegion>
@@ -673,45 +860,15 @@ function MaterialPreview({ material }: { material: MaterialRow }) {
       />
     );
   }
-  if (material.kind === "image" && material.url) {
+  if (material.url)
     return (
-      <img
-        src={material.url}
-        alt={material.title}
-        className="max-h-48 w-full rounded-md object-cover"
+      <MaterialMedia
+        key={material.url}
+        kind={material.kind}
+        url={material.url}
+        title={material.title}
+        compact
       />
     );
-  }
-  if (material.kind === "video" && material.url) {
-    return (
-      <div className="aspect-video w-full overflow-hidden rounded-md">
-        <iframe
-          src={material.url}
-          title={material.title}
-          className="h-full w-full"
-          allowFullScreen
-        />
-      </div>
-    );
-  }
-  if (material.kind === "slideshow" && material.url) {
-    return (
-      <div className="aspect-video w-full overflow-hidden rounded-md">
-        <iframe
-          src={material.url}
-          title={material.title}
-          className="h-full w-full"
-          allowFullScreen
-        />
-      </div>
-    );
-  }
-  if (material.kind === "pdf" && material.url) {
-    return (
-      <div className="overflow-hidden rounded-md border">
-        <iframe src={material.url} title={material.title} className="h-56 w-full" />
-      </div>
-    );
-  }
   return null;
 }

@@ -5,11 +5,119 @@ import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { getCurrentUser } from "@/lib/data/profile";
 import { assertRole } from "@/lib/auth/guard";
-import { extractYoutubeId, extractGoogleSlidesId } from "@/lib/materialEmbeds";
+import { getMaterialMediaUrl, SLIDESHOW_LINK_ERROR } from "@/lib/materialEmbeds";
+import { validateMaterialFile } from "@/lib/validateUpload";
 import { sanitizeRichText } from "@/lib/sanitizeRichText";
 import { richTextIsEmpty } from "@/lib/richTextEmpty";
+import { z } from "zod";
+import { parseAssignmentDeadline } from "@/lib/assignmentConstants";
+import {
+  discardAssignmentPhoto,
+  uploadAssignmentPhoto,
+  validateAssignmentPhoto,
+} from "@/lib/assignmentFiles";
 
 const MATERIAL_KINDS = ["pdf", "video", "text", "image", "slideshow"];
+
+type MaterialClient = Awaited<ReturnType<typeof createClient>>;
+
+async function canManageMaterial(
+  client: MaterialClient,
+  teacherId: string,
+  classId: string,
+  subjectId: string,
+  objectiveId: string,
+) {
+  const [{ data: teaching, error: teachingError }, { data: objective, error: objectiveError }] =
+    await Promise.all([
+      client
+        .from("class_teacher_subjects")
+        .select("id")
+        .eq("teacher_id", teacherId)
+        .eq("class_id", classId)
+        .eq("subject_id", subjectId)
+        .maybeSingle(),
+      client
+        .from("learning_objectives")
+        .select("id, curriculum_plans!inner(class_id, subject_id)")
+        .eq("id", objectiveId)
+        .eq("curriculum_plans.class_id", classId)
+        .eq("curriculum_plans.subject_id", subjectId)
+        .maybeSingle(),
+    ]);
+  // Check access and TP context before invoking privileged storage operations.
+  return !teachingError && !objectiveError && !!teaching && !!objective;
+}
+
+async function prepareMaterialContent(formData: FormData, kind: string, requireFile: boolean) {
+  if (kind === "text") {
+    const raw = String(formData.get("content") ?? "");
+    if (new TextEncoder().encode(raw).length > 512 * 1024)
+      throw new Error(
+        "Isi materi terlalu panjang. Gunakan lampiran PDF untuk materi yang panjang.",
+      );
+    const content = sanitizeRichText(raw);
+    if (richTextIsEmpty(content.replace(/&nbsp;|&#160;/g, " ")))
+      throw new Error("Isi materi teks wajib diisi.");
+    return { content };
+  }
+  if (kind === "video" || kind === "slideshow") {
+    const url = getMaterialMediaUrl(kind, String(formData.get("url") ?? ""));
+    if (!url)
+      throw new Error(kind === "video" ? "Tautan YouTube tidak valid." : SLIDESHOW_LINK_ERROR);
+    return { url };
+  }
+  if (kind !== "pdf" && kind !== "image") throw new Error("Jenis materi tidak valid.");
+  const value = formData.get("file");
+  if (!(value instanceof File) || (!value.size && !value.name)) {
+    if (requireFile) throw new Error("Pilih file untuk diunggah.");
+    return {};
+  }
+  const validation = validateMaterialFile(value, kind);
+  if (!validation.ok) throw new Error(validation.message);
+  const bytes = new Uint8Array(await value.slice(0, 12).arrayBuffer());
+  const starts = (...signature: number[]) => signature.every((byte, i) => bytes[i] === byte);
+  const valid =
+    value.type === "application/pdf"
+      ? starts(37, 80, 68, 70, 45)
+      : value.type === "image/png"
+        ? starts(137, 80, 78, 71, 13, 10, 26, 10)
+        : value.type === "image/jpeg"
+          ? starts(255, 216, 255)
+          : starts(82, 73, 70, 70) && [87, 69, 66, 80].every((byte, i) => bytes[i + 8] === byte);
+  if (!valid) throw new Error("Isi file tidak sesuai dengan format PDF/gambar yang dipilih.");
+  return { file: value };
+}
+
+async function uploadMaterialFile(file: File, classId: string, subjectId: string) {
+  const extension: Record<string, string> = {
+    "application/pdf": "pdf",
+    "image/png": "png",
+    "image/jpeg": "jpg",
+    "image/webp": "webp",
+  };
+  const path = `${classId}/${subjectId}/${crypto.randomUUID()}.${extension[file.type]}`;
+  const bucket = createAdminClient().storage.from("learning-materials");
+  const { error } = await bucket.upload(path, file, { contentType: file.type, upsert: false });
+  if (error) throw new Error("File gagal diunggah. Coba lagi; isian belum dihapus.");
+  return { path, url: bucket.getPublicUrl(path).data.publicUrl };
+}
+
+async function discardNewMaterialFile(path: string) {
+  // Only remove a new upload after a rejected database write. Never remove the old file.
+  try {
+    const { error } = await createAdminClient().storage.from("learning-materials").remove([path]);
+    if (error) console.error("Gagal membersihkan unggahan materi yang tidak tersimpan.");
+  } catch {
+    console.error("Gagal membersihkan unggahan materi yang tidak tersimpan.");
+  }
+}
+
+function refreshMaterials() {
+  revalidatePath("/classroom");
+  revalidatePath("/curriculum");
+  revalidatePath("/subjects", "layout");
+}
 
 export async function createMaterial(
   formData: FormData,
@@ -36,58 +144,46 @@ export async function createMaterial(
     return { ok: false, message: "Tidak diizinkan." };
   }
 
-  let url: string | null = null;
-  let content: string | null = null;
-
-  if (kind === "text") {
-    const rawContent = String(formData.get("content") ?? "");
-    if (richTextIsEmpty(rawContent)) return { ok: false, message: "Isi materi teks wajib diisi." };
-    content = sanitizeRichText(rawContent);
-  } else if (kind === "video") {
-    const rawUrl = String(formData.get("url") ?? "").trim();
-    const videoId = extractYoutubeId(rawUrl);
-    if (!videoId) return { ok: false, message: "Tautan YouTube tidak valid." };
-    url = `https://www.youtube.com/embed/${videoId}`;
-  } else if (kind === "slideshow") {
-    const rawUrl = String(formData.get("url") ?? "").trim();
-    const slidesId = extractGoogleSlidesId(rawUrl);
-    if (!slidesId) return { ok: false, message: "Tautan Google Slides tidak valid." };
-    url = `https://docs.google.com/presentation/d/${slidesId}/embed`;
-  } else {
-    const file = formData.get("file") as File | null;
-    if (!file || file.size === 0) return { ok: false, message: "Pilih file untuk diunggah." };
-
-    const admin = createAdminClient();
-    const ext = file.name.split(".").pop() || "bin";
-    const path = `${classId}/${subjectId}/${Date.now()}.${ext}`;
-    const { error: uploadError } = await admin.storage
-      .from("learning-materials")
-      .upload(path, file, { contentType: file.type, upsert: true });
-    if (uploadError) return { ok: false, message: uploadError.message };
-
-    const {
-      data: { publicUrl },
-    } = admin.storage.from("learning-materials").getPublicUrl(path);
-    url = publicUrl;
+  try {
+    if (title.length > 200) throw new Error("Judul maksimal 200 karakter.");
+    const prepared = await prepareMaterialContent(formData, kind, true);
+    const supabase = await createClient();
+    if (
+      !(await canManageMaterial(supabase, currentUser.id, classId, subjectId, learningObjectiveId))
+    ) {
+      return {
+        ok: false,
+        message: "Kelas, mata pelajaran, atau TP tidak sesuai dengan penugasan Anda.",
+      };
+    }
+    const upload = prepared.file
+      ? await uploadMaterialFile(prepared.file, classId, subjectId)
+      : null;
+    const { error } = await supabase.from("materials").insert({
+      class_id: classId,
+      subject_id: subjectId,
+      teacher_id: currentUser.id,
+      title,
+      kind,
+      url: upload?.url ?? prepared.url ?? null,
+      content: prepared.content ?? null,
+      learning_objective_id: learningObjectiveId,
+      is_active: isActive,
+    });
+    if (error) {
+      if (upload) await discardNewMaterialFile(upload.path);
+      return {
+        ok: false,
+        message: "Materi gagal disimpan. Periksa penugasan dan TP, lalu coba lagi.",
+      };
+    }
+  } catch (error) {
+    return {
+      ok: false,
+      message: error instanceof Error ? error.message : "Materi gagal disimpan. Coba lagi.",
+    };
   }
-
-  const supabase = await createClient();
-  const { error } = await supabase.from("materials").insert({
-    class_id: classId,
-    subject_id: subjectId,
-    teacher_id: currentUser.id,
-    title,
-    kind,
-    url,
-    content,
-    learning_objective_id: learningObjectiveId,
-    is_active: isActive,
-  });
-  if (error) return { ok: false, message: error.message };
-
-  revalidatePath("/classroom");
-  revalidatePath("/curriculum");
-  revalidatePath("/subjects");
+  refreshMaterials();
   return {
     ok: true,
     message: isActive
@@ -111,23 +207,61 @@ export async function updateMaterial(
     return { ok: false, message: "Tujuan Pembelajaran (TP) wajib dipilih." };
   }
 
-  const update: { title: string; learning_objective_id: string; content?: string } = {
-    title,
-    learning_objective_id: learningObjectiveId,
-  };
-  if (formData.has("content")) {
-    const rawContent = String(formData.get("content") ?? "");
-    if (richTextIsEmpty(rawContent)) return { ok: false, message: "Isi materi teks wajib diisi." };
-    update.content = sanitizeRichText(rawContent);
+  if (!currentUser) return { ok: false, message: "Tidak diizinkan." };
+  try {
+    if (title.length > 200) throw new Error("Judul maksimal 200 karakter.");
+    const supabase = await createClient();
+    const { data: material, error: readError } = await supabase
+      .from("materials")
+      .select("id, class_id, subject_id, kind")
+      .eq("id", id)
+      .maybeSingle();
+    if (readError || !material)
+      return { ok: false, message: "Materi tidak ditemukan atau tidak dapat diakses." };
+    if (
+      !(await canManageMaterial(
+        supabase,
+        currentUser.id,
+        material.class_id,
+        material.subject_id,
+        learningObjectiveId,
+      ))
+    ) {
+      return {
+        ok: false,
+        message: "Kelas, mata pelajaran, atau TP tidak sesuai dengan penugasan Anda.",
+      };
+    }
+    const prepared = await prepareMaterialContent(formData, material.kind, false);
+    const upload = prepared.file
+      ? await uploadMaterialFile(prepared.file, material.class_id, material.subject_id)
+      : null;
+    const update = {
+      title,
+      learning_objective_id: learningObjectiveId,
+      ...(prepared.content !== undefined ? { content: prepared.content } : {}),
+      ...(upload || prepared.url ? { url: upload?.url ?? prepared.url } : {}),
+    };
+    const { data, error } = await supabase
+      .from("materials")
+      .update(update)
+      .eq("id", id)
+      .select("id")
+      .maybeSingle();
+    if (error || !data) {
+      if (upload) await discardNewMaterialFile(upload.path);
+      return {
+        ok: false,
+        message: "Perubahan gagal disimpan. Materi dan lampiran lama tetap tersedia.",
+      };
+    }
+  } catch (error) {
+    return {
+      ok: false,
+      message: error instanceof Error ? error.message : "Perubahan gagal disimpan. Coba lagi.",
+    };
   }
-
-  const supabase = await createClient();
-  const { error } = await supabase.from("materials").update(update).eq("id", id);
-  if (error) return { ok: false, message: error.message };
-
-  revalidatePath("/classroom");
-  revalidatePath("/curriculum");
-  revalidatePath("/subjects");
+  refreshMaterials();
   return { ok: true, message: "Materi berhasil diperbarui." };
 }
 
@@ -167,24 +301,42 @@ export async function setMaterialActive(
 
 const ASSIGNMENT_METHODS = ["text", "photo"];
 
-async function uploadAssignmentImage(
-  assignmentId: string,
-  classId: string,
-  subjectId: string,
-  file: File,
-): Promise<{ url: string; name: string } | { error: string }> {
-  const admin = createAdminClient();
-  const ext = file.name.split(".").pop() || "bin";
-  const path = `assignments/${classId}/${subjectId}/${assignmentId}/${Date.now()}-${Math.random().toString(36).slice(2)}.${ext}`;
-  const { error: uploadError } = await admin.storage
-    .from("learning-materials")
-    .upload(path, file, { contentType: file.type, upsert: true });
-  if (uploadError) return { error: uploadError.message };
+async function prepareAssignmentAttachment(form: FormData, folder: string) {
+  const file = form.get("attachment_image");
+  if (file == null || (file instanceof File && !file.name && !file.size)) return null;
+  if (!(file instanceof File)) throw new Error("Lampiran tidak valid.");
+  const validation = await validateAssignmentPhoto(file);
+  if (!validation.ok) throw new Error(validation.message);
+  const upload = await uploadAssignmentPhoto(file, "learning-materials", folder);
+  if (!upload.ok) throw new Error(upload.message);
+  return { ...upload, name: file.name };
+}
 
-  const {
-    data: { publicUrl },
-  } = admin.storage.from("learning-materials").getPublicUrl(path);
-  return { url: publicUrl, name: file.name };
+async function managedAssignment(client: MaterialClient, teacherId: string, id: string) {
+  if (!z.string().uuid().safeParse(id).success) return null;
+  const { data: task, error } = await client
+    .from("assignments")
+    .select("id, class_id, subject_id, learning_objective_id, attachment_image_url, due_at")
+    .eq("id", id)
+    .neq("kind", "quiz")
+    .maybeSingle();
+  if (error || !task) return null;
+  const { data: teaching, error: teachingError } = await client
+    .from("class_teacher_subjects")
+    .select("id")
+    .eq("teacher_id", teacherId)
+    .eq("class_id", task.class_id)
+    .eq("subject_id", task.subject_id)
+    .maybeSingle();
+  return teachingError || !teaching ? null : task;
+}
+
+function refreshAssignments() {
+  revalidatePath("/classroom");
+  revalidatePath("/curriculum");
+  revalidatePath("/subjects", "layout");
+  revalidatePath("/assessments");
+  revalidatePath("/dashboard");
 }
 
 export async function createAssignment(
@@ -221,47 +373,76 @@ export async function createAssignment(
     return { ok: false, message: "Tidak diizinkan." };
   }
 
-  const dueAt = new Date(`${dueDate}T${dueTime}:00`);
-  if (Number.isNaN(dueAt.getTime())) {
+  const dueAt = parseAssignmentDeadline(dueDate, dueTime);
+  if (!dueAt) {
     return { ok: false, message: "Batas pengumpulan tidak valid." };
   }
 
   const description = richTextIsEmpty(rawDescription) ? null : sanitizeRichText(rawDescription);
   const kind = methods.includes("text") ? "essay" : "photo";
-  const attachmentImage = formData.get("attachment_image") as File | null;
-
-  const supabase = await createClient();
-  const { data: inserted, error } = await supabase
-    .from("assignments")
-    .insert({
+  if (
+    ![classId, subjectId, learningObjectiveId].every(
+      (id) => z.string().uuid().safeParse(id).success,
+    ) ||
+    title.length > 200
+  )
+    return {
+      ok: false,
+      message: "Kelas, mata pelajaran, TP, atau judul tidak valid (maksimal 200 karakter).",
+    };
+  if (new TextEncoder().encode(rawDescription).length > 128 * 1024)
+    return {
+      ok: false,
+      message: "Instruksi terlalu panjang. Gunakan lampiran untuk informasi tambahan.",
+    };
+  try {
+    const supabase = await createClient();
+    if (
+      !(await canManageMaterial(supabase, currentUser.id, classId, subjectId, learningObjectiveId))
+    )
+      return {
+        ok: false,
+        message: "Penugasan guru atau TP tidak sesuai kelas dan mata pelajaran.",
+      };
+    const id = crypto.randomUUID();
+    const upload = await prepareAssignmentAttachment(
+      formData,
+      `assignments/${classId}/${subjectId}/${id}`,
+    );
+    const { error } = await supabase.from("assignments").insert({
+      id,
       class_id: classId,
       subject_id: subjectId,
       teacher_id: currentUser.id,
       title,
       kind,
       description,
-      due_at: dueAt.toISOString(),
+      due_at: dueAt,
       learning_objective_id: learningObjectiveId,
       allowed_methods: methods,
       is_published: isActive,
-    })
-    .select("id")
-    .single();
-  if (error || !inserted) return { ok: false, message: error?.message ?? "Gagal menyimpan tugas." };
-
-  if (attachmentImage && attachmentImage.size > 0) {
-    const result = await uploadAssignmentImage(inserted.id, classId, subjectId, attachmentImage);
-    if ("error" in result) return { ok: false, message: result.error };
-    const { error: attachError } = await supabase
-      .from("assignments")
-      .update({ attachment_image_url: result.url, attachment_image_name: result.name })
-      .eq("id", inserted.id);
-    if (attachError) return { ok: false, message: attachError.message };
+      attachment_image_url: upload?.url ?? null,
+      attachment_image_name: upload?.name ?? null,
+    });
+    if (error) {
+      if (upload && /^(22|23|42)/.test(error.code))
+        await discardAssignmentPhoto("learning-materials", upload.path);
+      return {
+        ok: false,
+        message:
+          "Tugas belum dapat dikonfirmasi tersimpan. Periksa daftar tugas sebelum mencoba lagi.",
+      };
+    }
+  } catch (error) {
+    return {
+      ok: false,
+      message:
+        error instanceof Error
+          ? error.message
+          : "Tugas belum berhasil disimpan. Isian tetap tersedia.",
+    };
   }
-
-  revalidatePath("/classroom");
-  revalidatePath("/curriculum");
-  revalidatePath("/subjects");
+  refreshAssignments();
   return {
     ok: true,
     message: isActive ? "Tugas berhasil dipublikasikan." : "Tugas berhasil disimpan sebagai draf.",
@@ -283,22 +464,80 @@ export async function updateAssignment(
     return { ok: false, message: "Tujuan Pembelajaran (TP) wajib dipilih." };
   }
 
-  const update: { title: string; learning_objective_id: string; description?: string | null } = {
+  if (!currentUser) return { ok: false, message: "Tidak diizinkan." };
+  if (title.length > 200 || !z.string().uuid().safeParse(learningObjectiveId).success)
+    return { ok: false, message: "Judul atau TP tidak valid." };
+  const update: {
+    title: string;
+    learning_objective_id: string;
+    description?: string | null;
+    due_at?: string;
+    attachment_image_url?: string;
+    attachment_image_name?: string;
+  } = {
     title,
     learning_objective_id: learningObjectiveId,
   };
   if (formData.has("description")) {
     const raw = String(formData.get("description") ?? "");
+    if (new TextEncoder().encode(raw).length > 128 * 1024)
+      return { ok: false, message: "Instruksi terlalu panjang." };
     update.description = richTextIsEmpty(raw) ? null : sanitizeRichText(raw);
   }
 
-  const supabase = await createClient();
-  const { error } = await supabase.from("assignments").update(update).eq("id", id);
-  if (error) return { ok: false, message: error.message };
-
-  revalidatePath("/classroom");
-  revalidatePath("/curriculum");
-  revalidatePath("/subjects");
+  if (formData.has("due_date") || formData.has("due_time")) {
+    const dueAt = parseAssignmentDeadline(
+      String(formData.get("due_date") ?? ""),
+      String(formData.get("due_time") ?? ""),
+    );
+    if (!dueAt) return { ok: false, message: "Isi tanggal dan jam tenggat yang valid (WITA)." };
+    update.due_at = dueAt;
+  }
+  try {
+    const supabase = await createClient();
+    const task = await managedAssignment(supabase, currentUser.id, id);
+    if (
+      !task ||
+      !(await canManageMaterial(
+        supabase,
+        currentUser.id,
+        task.class_id,
+        task.subject_id,
+        learningObjectiveId,
+      ))
+    )
+      return { ok: false, message: "Tugas atau TP tidak sesuai penugasanmu." };
+    const upload = await prepareAssignmentAttachment(
+      formData,
+      `assignments/${task.class_id}/${task.subject_id}/${id}`,
+    );
+    if (upload) {
+      update.attachment_image_url = upload.url;
+      update.attachment_image_name = upload.name;
+    }
+    const { data, error } = await supabase
+      .from("assignments")
+      .update(update)
+      .eq("id", id)
+      .neq("kind", "quiz")
+      .select("id")
+      .maybeSingle();
+    if (error || !data) {
+      if (upload && (!error || /^(22|23|42)/.test(error.code)))
+        await discardAssignmentPhoto("learning-materials", upload.path);
+      return {
+        ok: false,
+        message:
+          "Perubahan tugas belum dapat dikonfirmasi. Muat ulang untuk memeriksa; lampiran lama tidak dihapus.",
+      };
+    }
+  } catch (error) {
+    return {
+      ok: false,
+      message: error instanceof Error ? error.message : "Perubahan belum berhasil disimpan.",
+    };
+  }
+  refreshAssignments();
   return { ok: true, message: "Tugas berhasil diperbarui." };
 }
 
@@ -311,14 +550,17 @@ export async function setAssignmentActive(
   if (roleError) return roleError;
 
   const supabase = await createClient();
-  const { error } = await supabase
+  if (!currentUser || !(await managedAssignment(supabase, currentUser.id, id)))
+    return { ok: false, message: "Tugas tidak sesuai penugasanmu." };
+  const { data, error } = await supabase
     .from("assignments")
     .update({ is_published: isActive })
-    .eq("id", id);
-  if (error) return { ok: false, message: error.message };
-
-  revalidatePath("/classroom");
-  revalidatePath("/subjects");
+    .eq("id", id)
+    .neq("kind", "quiz")
+    .select("id")
+    .maybeSingle();
+  if (error || !data) return { ok: false, message: "Status tugas belum berhasil diubah." };
+  refreshAssignments();
   return {
     ok: true,
     message: isActive ? "Tugas diaktifkan kembali." : "Tugas dinonaktifkan dari tampilan siswa.",
@@ -333,30 +575,17 @@ export async function removeAssignmentAttachmentImage(
   if (roleError) return roleError;
 
   const supabase = await createClient();
-  const { data: assignment } = await supabase
-    .from("assignments")
-    .select("attachment_image_url")
-    .eq("id", id)
-    .single();
-
-  if (assignment?.attachment_image_url) {
-    const marker = "/learning-materials/";
-    const idx = assignment.attachment_image_url.indexOf(marker);
-    if (idx >= 0) {
-      const path = assignment.attachment_image_url.slice(idx + marker.length);
-      const admin = createAdminClient();
-      await admin.storage.from("learning-materials").remove([path]);
-    }
-  }
-
-  const { error } = await supabase
+  if (!currentUser || !(await managedAssignment(supabase, currentUser.id, id)))
+    return { ok: false, message: "Tugas tidak sesuai penugasanmu." };
+  const { data, error } = await supabase
     .from("assignments")
     .update({ attachment_image_url: null, attachment_image_name: null })
-    .eq("id", id);
-  if (error) return { ok: false, message: error.message };
-
-  revalidatePath("/classroom");
-  revalidatePath("/subjects");
+    .eq("id", id)
+    .neq("kind", "quiz")
+    .select("id")
+    .maybeSingle();
+  if (error || !data) return { ok: false, message: "Lampiran belum berhasil dihapus dari tugas." };
+  refreshAssignments();
   return { ok: true, message: "Lampiran berhasil dihapus." };
 }
 
@@ -367,10 +596,14 @@ export async function deleteAssignment(id: string): Promise<{ ok: boolean; messa
 
   const supabase = await createClient();
 
-  const { count } = await supabase
+  if (!currentUser || !(await managedAssignment(supabase, currentUser.id, id)))
+    return { ok: false, message: "Tugas tidak sesuai penugasanmu." };
+  const { count, error: countError } = await supabase
     .from("submissions")
     .select("id", { count: "exact", head: true })
     .eq("assignment_id", id);
+  if (countError || count == null)
+    return { ok: false, message: "Pengumpulan siswa belum dapat diperiksa. Tugas tidak dihapus." };
   if (count) {
     return {
       ok: false,
@@ -378,11 +611,16 @@ export async function deleteAssignment(id: string): Promise<{ ok: boolean; messa
     };
   }
 
-  const { error } = await supabase.from("assignments").delete().eq("id", id);
+  const { data, error } = await supabase
+    .from("assignments")
+    .delete()
+    .eq("id", id)
+    .neq("kind", "quiz")
+    .select("id")
+    .maybeSingle();
   if (error) return { ok: false, message: error.message };
-
-  revalidatePath("/classroom");
-  revalidatePath("/curriculum");
+  if (!data) return { ok: false, message: "Tugas tidak ditemukan atau tidak dapat dihapus." };
+  refreshAssignments();
   return { ok: true, message: "Tugas berhasil dihapus." };
 }
 

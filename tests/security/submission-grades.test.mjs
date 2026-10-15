@@ -73,6 +73,11 @@ before(async () => {
     create role authenticated nologin;
     create role service_role nologin bypassrls;
     create schema auth;
+    create schema storage;
+    create table storage.buckets (id text primary key, name text, public boolean, file_size_limit bigint, allowed_mime_types text[]);
+    create table storage.objects (id int primary key, bucket_id text);
+    alter table storage.objects enable row level security;
+    create policy test_existing_storage_access on storage.objects for all using (true) with check (true);
     create table auth.users (
       id uuid primary key, email text,
       raw_user_meta_data jsonb not null default '{}',
@@ -90,6 +95,8 @@ before(async () => {
   }
   await db.exec(`
     grant usage on schema public, auth to anon, authenticated, service_role;
+    grant usage on schema storage to anon, authenticated, service_role;
+    grant all on all tables in schema storage to anon, authenticated, service_role;
     grant all on all tables in schema public to anon, authenticated, service_role;
     insert into public.schools (id, name) values ('${id(20)}', 'Test school');
     insert into public.academic_years (id, school_id, year_label, semester, is_active)
@@ -158,6 +165,7 @@ after(async () => db.close());
 
 test("old submission RLS alone permits students to assign themselves grades", async () => {
   await db.exec("drop trigger submissions_guard_write on public.submissions");
+  await db.exec("drop trigger submissions_guard_task_channel on public.submissions");
   await asUser(users.student);
   await db.query("update public.submissions set score = 100, status = 'graded' where id = $1", [
     submission,
@@ -165,18 +173,18 @@ test("old submission RLS alone permits students to assign themselves grades", as
   assert.equal((await row()).score, "100.00");
 });
 
-test("student assignment upserts still insert and revise ungraded answers", async () => {
-  await asUser(users.student);
+test("the trusted task RPC inserts and revises ungraded answers", async () => {
+  await asUser(users.student, "service_role");
   for (const assignmentId of [newTask, task]) {
     for (const content of ["First answer", "Revised answer"]) {
-      const { rows } = await db.query(
-        `
-        insert into public.submissions (assignment_id, student_id, content_url, status, submitted_at)
-        values ($1, $2, $3, 'submitted', now())
-        on conflict (assignment_id, student_id) do update
-          set content_url = excluded.content_url, status = excluded.status, submitted_at = excluded.submitted_at
-        returning *`,
+      await db.query(
+        `select * from public.save_assignment_submission($1, $2, 'text', $3,
+          (select updated_at from public.submissions where assignment_id = $1 and student_id = $2))`,
         [assignmentId, users.student, content],
+      );
+      const { rows } = await db.query(
+        "select * from public.submissions where assignment_id = $1 and student_id = $2",
+        [assignmentId, users.student],
       );
       assert.equal(rows[0].content_url, content);
       assert.equal(rows[0].status, "submitted");
@@ -502,3 +510,173 @@ for (const hasPlaceholder of [false, true]) {
     if (hasPlaceholder) assert.equal(Number(answers[0].points_earned), 0);
   });
 }
+
+const taskRpc = `select * from public.save_assignment_submission($1, $2, $3, $4,
+  (select updated_at from public.submissions where assignment_id = $1 and student_id = $2))`;
+const taskParams = (
+  content = "Answer",
+  assignment = newTask,
+  method = "text",
+  student = users.student,
+) => [assignment, student, method, content];
+
+test("direct student task insert/update is rejected even without grading fields", async () => {
+  await asUser(users.student);
+  await rejects(
+    "insert into public.submissions (assignment_id, student_id, content_url) values ($1, $2, 'Bypass')",
+    [newTask, users.student],
+  );
+  await rejects("update public.submissions set content_url = 'Bypass' where id = $1", [submission]);
+  assert.equal((await row()).content_url, "Original answer");
+});
+
+for (const [name, actor] of Object.entries(users)) {
+  test(`${name} cannot invoke the trusted task RPC directly`, async () => {
+    await asUser(actor);
+    await rejects(taskRpc, taskParams());
+  });
+}
+
+for (const [name, change, params, code] of [
+  [
+    "expired deadline",
+    "update public.assignments set due_at = now() - interval '1 second' where id = $1",
+    [newTask],
+    "55000",
+  ],
+  [
+    "unpublished task",
+    "update public.assignments set is_published = false where id = $1",
+    [newTask],
+    "42501",
+  ],
+  [
+    "photo-only task with text",
+    "update public.assignments set allowed_methods = array['photo'] where id = $1",
+    [newTask],
+    "22023",
+  ],
+  [
+    "another class",
+    "update public.assignments set class_id = $2 where id = $1",
+    [newTask, otherClassroom],
+    "42501",
+  ],
+  ["inactive academic period", "update public.academic_years set is_active = false", [], "42501"],
+]) {
+  test(`task RPC rejects ${name} without saving an answer`, async () => {
+    await db.query(change, params);
+    await asUser(users.student, "service_role");
+    await rejects(taskRpc, taskParams(), code);
+    assert.equal(
+      (
+        await db.query(
+          "select count(*)::int as count from public.submissions where assignment_id = $1",
+          [newTask],
+        )
+      ).rows[0].count,
+      0,
+    );
+  });
+}
+
+test("task RPC rejects quizzes, graded answers, non-students and stale edits", async () => {
+  await asUser(users.student, "service_role");
+  await rejects(taskRpc, taskParams("Answer", quiz), "42501");
+  await rejects(taskRpc, taskParams("Answer", newTask, "text", users.teacher), "42501");
+  await rejects(taskRpc, taskParams("Replace grade", gradedTask), "55000");
+  await rejects(
+    "select * from public.save_assignment_submission($1, $2, 'text', 'Stale', '2000-01-01')",
+    [task, users.student],
+    "55000",
+  );
+  assert.equal((await row()).content_url, "Original answer");
+});
+
+test("extending a deadline reopens task submission without clearing existing grades", async () => {
+  await db.query("update public.assignments set due_at = now() + interval '1 day' where id = $1", [
+    newTask,
+  ]);
+  await asUser(users.student, "service_role");
+  const result = await db.query(taskRpc, taskParams());
+  assert.ok(result.rows[0].submitted_at);
+  assert.equal((await row(gradedSubmission)).score, "75.00");
+});
+
+test("photo submissions require an owned storage path and an allowed method", async () => {
+  await db.query(
+    "update public.assignments set allowed_methods = array['text', 'photo'] where id = $1",
+    [newTask],
+  );
+  await asUser(users.student, "service_role");
+  for (const bad of [
+    "https://example.com/image.png",
+    `assignment-submissions/${newTask}/${users.other}/${id(99)}.jpg`,
+    `assignment-submissions/${task}/${users.student}/${id(99)}.jpg`,
+  ])
+    await rejects(taskRpc, taskParams(bad, newTask, "photo"), "22023");
+  const content = `assignment-submissions/${newTask}/${users.student}/${id(99)}.jpg`;
+  await db.query(taskRpc, taskParams(content, newTask, "photo"));
+  const saved = (
+    await db.query("select content_url from public.submissions where assignment_id = $1", [newTask])
+  ).rows[0];
+  assert.equal(saved.content_url, content);
+  await rejects(taskRpc, taskParams(content, newTask, "text"), "22023");
+});
+
+test("a used task cannot be deleted even by an administrator; answers and grades survive", async () => {
+  await asUser(users.admin);
+  await rejects("delete from public.assignments where id = $1", [task], "55000");
+  await rejects("delete from public.assignments where id = $1", [gradedTask], "55000");
+  assert.equal((await row()).content_url, "Original answer");
+  assert.equal((await row(gradedSubmission)).score, "75.00");
+  await db.query("delete from public.assignments where id = $1", [newTask]);
+  assert.equal(
+    (await db.query("select id from public.assignments where id = $1", [newTask])).rows.length,
+    0,
+  );
+});
+
+test("an answer changed after opening cannot receive a stale conditional grade", async () => {
+  const previous = (
+    await db.query("select updated_at::text as version from public.submissions where id = $1", [
+      submission,
+    ])
+  ).rows[0].version;
+  await asUser(users.student, "service_role");
+  await db.query(taskRpc, taskParams("New answer", task));
+  await asUser(users.teacher);
+  const result = await db.query(
+    "update public.submissions set score = 80, status = 'graded' where id = $1 and updated_at = $2 returning id",
+    [submission, previous],
+  );
+  assert.equal(result.rows.length, 0);
+  assert.equal((await row()).score, null);
+});
+
+test("student photos use a private size-limited bucket and deny direct client storage access", async () => {
+  const bucket = (
+    await db.query("select * from storage.buckets where id = 'assignment-submissions'")
+  ).rows[0];
+  assert.equal(bucket.public, false);
+  assert.equal(Number(bucket.file_size_limit), 2 * 1024 * 1024);
+  assert.deepEqual(bucket.allowed_mime_types, ["image/jpeg", "image/png", "image/webp"]);
+  await db.exec(
+    "insert into storage.objects (id, bucket_id) values (1, 'assignment-submissions'), (2, 'learning-materials')",
+  );
+  await asUser(users.student);
+  assert.deepEqual(
+    (await db.query("select id from storage.objects order by id")).rows.map((r) => r.id),
+    [2],
+  );
+  await rejects(
+    "insert into storage.objects (id, bucket_id) values (3, 'assignment-submissions')",
+    [],
+  );
+});
+
+test("a used task cannot be relabeled to bypass its deletion protection", async () => {
+  await asUser(users.teacher);
+  await rejects("update public.assignments set kind = 'quiz' where id = $1", [task], "55000");
+  assert.equal((await row()).content_url, "Original answer");
+});

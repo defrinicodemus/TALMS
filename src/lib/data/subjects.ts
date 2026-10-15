@@ -1,6 +1,8 @@
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { computeQuizStatus, type QuizStatus } from "@/lib/quizStatus";
+import { assignmentMethods } from "@/lib/assignmentConstants";
+import { assignmentPhotoUrl } from "@/lib/assignmentFiles";
 
 export type AssignmentStatus = "belum" | "dikerjakan" | "submitted" | "graded";
 
@@ -213,15 +215,22 @@ export async function getMaterialForStudent(
   };
 }
 
+export interface StudentAssignmentDetail extends AssignmentContentRow {
+  allowedMethods: ("text" | "photo")[];
+  submittedAt: string | null;
+  submissionUpdatedAt: string | null;
+  submissionPhotoUrl: string | null;
+}
+
 export async function getAssignmentForStudent(
   assignmentId: string,
   studentId: string | null,
-): Promise<AssignmentContentRow | null> {
+): Promise<StudentAssignmentDetail | null> {
   const supabase = await createClient();
   const { data: a } = await supabase
     .from("assignments")
     .select(
-      "id, subject_id, title, kind, description, due_at, learning_objective_id, learning_objectives(title), created_at, attachment_image_url, attachment_image_name, is_active",
+      "id, subject_id, title, kind, description, due_at, learning_objective_id, learning_objectives(title), created_at, attachment_image_url, attachment_image_name, is_active, allowed_methods",
     )
     .eq("id", assignmentId)
     .maybeSingle();
@@ -232,11 +241,13 @@ export async function getAssignmentForStudent(
     score: number | null;
     teacher_comment: string | null;
     content_url: string | null;
+    submitted_at: string | null;
+    updated_at: string;
   } | null = null;
   if (studentId) {
     const { data } = await supabase
       .from("submissions")
-      .select("status, score, teacher_comment, content_url")
+      .select("status, score, teacher_comment, content_url, submitted_at, updated_at")
       .eq("assignment_id", assignmentId)
       .eq("student_id", studentId)
       .maybeSingle();
@@ -268,6 +279,10 @@ export async function getAssignmentForStudent(
     score: sub?.score ?? null,
     teacherComment: sub?.teacher_comment ?? null,
     submissionContent: sub?.content_url ?? null,
+    allowedMethods: assignmentMethods(a.allowed_methods, a.kind),
+    submittedAt: sub?.submitted_at ?? null,
+    submissionUpdatedAt: sub?.updated_at ?? null,
+    submissionPhotoUrl: await assignmentPhotoUrl(sub?.content_url ?? null).catch(() => null),
     questionCount,
     createdAt: a.created_at,
     attachmentImageUrl: a.attachment_image_url,
