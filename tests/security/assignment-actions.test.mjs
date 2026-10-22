@@ -199,6 +199,7 @@ function setup(options = {}) {
     "@/lib/supabase/admin": { createAdminClient: () => admin },
     "@/lib/data/profile": { getCurrentUser: async () => state.user },
     "@/lib/data/subjects": {},
+    "@/lib/quizServer": {},
     "@/lib/data/review": {},
     "next/cache": { revalidatePath: (...args) => state.invalidated.push(args) },
     "next/navigation": { redirect: () => assert.fail("Unexpected redirect") },
@@ -397,6 +398,35 @@ test("teacher extends deadline without changing the task or its existing attachm
   assert.equal(state.task.id, id(1));
   assert.equal(state.task.attachment_image_url, "https://storage.example/old.jpg");
   assert.equal(state.task.due_at, "2099-03-04T15:59:00.000Z");
+});
+
+test("teacher cannot deactivate a task after a student submits and must extend an expired task", async () => {
+  const used = setup({ user: teacherUser, submission: { ...existing } });
+  const usedResult = await used.teacher.setAssignmentActive(id(1), false);
+  assert.equal(usedResult.ok, false);
+  assert.match(usedResult.message, /sudah memiliki pengumpulan/i);
+  assert.equal(used.state.writes.length, 0);
+
+  const expired = setup({ user: teacherUser });
+  expired.state.task.is_published = false;
+  expired.state.task.due_at = "2000-01-01T00:00:00Z";
+  const expiredResult = await expired.teacher.setAssignmentActive(id(1), true);
+  assert.equal(expiredResult.ok, false);
+  assert.match(expiredResult.message, /perpanjang tenggat/i);
+  assert.equal(expired.state.writes.length, 0);
+});
+
+test("teacher cannot deactivate a quiz after a student answer exists", async () => {
+  const { teacher, state } = setup({ user: teacherUser, submission: { ...existing } });
+  Object.assign(state.task, {
+    kind: "quiz",
+    teacher_id: teacherUser.id,
+    is_active: true,
+  });
+  const result = await teacher.setQuizActive(id(1), false);
+  assert.equal(result.ok, false);
+  assert.match(result.message, /sudah memiliki jawaban/i);
+  assert.equal(state.writes.length, 0);
 });
 
 test("grade writes compare the exact opened answer version and reject concurrent changes", async () => {

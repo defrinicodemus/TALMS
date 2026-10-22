@@ -4,6 +4,7 @@ import { useState, useTransition } from "react";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogTrigger } from "@/components/ui/dialog";
 import { ResponsiveDialogContent } from "@/components/ResponsiveDialogContent";
+import { formatAssignmentTime } from "@/lib/assignmentConstants";
 import { cn } from "@/lib/utils";
 import type { QuizAnswerReviewItem } from "@/lib/data/review";
 import { fetchQuizAnswerReview } from "./actions";
@@ -31,14 +32,20 @@ export function QuizReviewDialog({
   const [items, setItems] = useState<QuizAnswerReviewItem[] | null>(null);
   const [isPending, startTransition] = useTransition();
 
+  const [error, setError] = useState<string | null>(null);
+  function loadReview() {
+    setError(null);
+    startTransition(async () => {
+      try {
+        setItems(await fetchQuizAnswerReview(assignmentId, studentId));
+      } catch {
+        setError("Hasil kuis belum dapat dimuat. Periksa koneksi lalu coba lagi.");
+      }
+    });
+  }
   function handleOpenChange(next: boolean) {
     setOpen(next);
-    if (next && items === null) {
-      startTransition(async () => {
-        const data = await fetchQuizAnswerReview(assignmentId, studentId);
-        setItems(data);
-      });
-    }
+    if (next && items === null) loadReview();
   }
 
   const benar = items?.filter((i) => i.points > 0 && i.pointsEarned >= i.points).length ?? 0;
@@ -48,10 +55,7 @@ export function QuizReviewDialog({
   const tuntas = passingGrade != null && score != null ? score >= passingGrade : null;
 
   const submittedLabel = submittedAt
-    ? `Dikerjakan ${new Date(submittedAt).toLocaleString("id-ID", {
-        dateStyle: "long",
-        timeStyle: "short",
-      })}`
+    ? "Dikerjakan " + formatAssignmentTime(submittedAt)
     : "Belum dikerjakan";
 
   return (
@@ -115,6 +119,14 @@ export function QuizReviewDialog({
           <div className="space-y-2 border-t pt-4">
             <div className="text-sm font-semibold">Review Hasil</div>
             {isPending && <p className="text-sm text-muted-foreground">Memuat...</p>}
+            {error && (
+              <div role="alert" className="space-y-2 text-sm">
+                <p>{error}</p>
+                <Button variant="outline" disabled={isPending} onClick={loadReview}>
+                  Coba Lagi
+                </Button>
+              </div>
+            )}
             {!isPending && items && items.length === 0 && (
               <p className="text-sm text-muted-foreground">Belum ada jawaban.</p>
             )}
@@ -139,6 +151,11 @@ export function QuizReviewDialog({
                     <div className="text-xs font-medium text-muted-foreground">Jawaban Benar :</div>
                     <p>{it.correctAnswerLabel}</p>
                   </div>
+                  {it.explanation && (
+                    <p className="whitespace-pre-wrap rounded-md bg-muted/40 p-2">
+                      Pembahasan: {it.explanation}
+                    </p>
+                  )}
                   <div className="font-medium text-primary">
                     Skor : {it.pointsEarned}/{it.points} poin
                   </div>
@@ -161,6 +178,14 @@ export function QuizReviewDialog({
             <div className="space-y-2 border-t pt-4">
               <div className="text-sm font-semibold">Review Hasil</div>
               {isPending && <p className="text-sm text-muted-foreground">Memuat...</p>}
+              {error && (
+                <div role="alert" className="space-y-2 text-sm">
+                  <p>{error}</p>
+                  <Button variant="outline" disabled={isPending} onClick={loadReview}>
+                    Coba Lagi
+                  </Button>
+                </div>
+              )}
               {!isPending && items && items.length === 0 && (
                 <p className="text-sm text-muted-foreground">Belum ada jawaban.</p>
               )}
@@ -191,6 +216,11 @@ export function QuizReviewDialog({
                               <span className="text-muted-foreground">Jawaban Benar: </span>
                               {it.correctAnswerLabel}
                             </div>
+                            {it.explanation && (
+                              <p className="whitespace-pre-wrap rounded-md bg-muted/40 p-2">
+                                Pembahasan: {it.explanation}
+                              </p>
+                            )}
                             <div className="font-medium text-primary">
                               Skor: {it.pointsEarned}/{it.points} poin
                             </div>

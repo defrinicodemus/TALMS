@@ -8,6 +8,12 @@ import { getCurrentUser } from "@/lib/data/profile";
 import { assertRole } from "@/lib/auth/guard";
 import { getQuizForStudent, type StudentQuizData } from "@/lib/data/subjects";
 import {
+  getStudentQuizContext,
+  readQuizBank,
+  quizBankError,
+  quizTargetToken,
+} from "@/lib/quizServer";
+import {
   ASSIGNMENT_MAX_TEXT_LENGTH,
   ASSIGNMENT_PHOTO_BUCKET,
   assignmentMethods,
@@ -203,17 +209,17 @@ export async function submitAssignment(
 
 export async function fetchQuizForStudent(assignmentId: string): Promise<StudentQuizData | null> {
   const currentUser = await getCurrentUser();
-  if (assertRole(currentUser, ["student"])) return null;
-  if (!currentUser) return null;
-  return getQuizForStudent(assignmentId, currentUser.id);
+  if (assertRole(currentUser, ["student"]) || !currentUser?.classId) return null;
+  if (!z.string().uuid().safeParse(assignmentId).success) return null;
+  return getQuizForStudent(assignmentId, currentUser.id, currentUser.classId);
 }
 
 const quizAnswerSchema = z.object({
   questionId: z.string().uuid(),
   selectedOptionId: z.string().uuid().optional(),
   trueFalseAnswer: z.enum(["benar", "salah"]).optional(),
-  dragDropAnswer: z.record(z.string().uuid(), z.string().uuid()).optional(),
-  sequenceAnswer: z.array(z.string().uuid()).optional(),
+  dragDropAnswer: z.record(z.string().uuid(), z.string().regex(/^[a-f0-9]{64}$/)).optional(),
+  sequenceAnswer: z.array(z.string().uuid()).max(100).optional(),
 });
 
 type QuizAnswerInput = z.infer<typeof quizAnswerSchema>;
@@ -221,108 +227,175 @@ type QuizAnswerInput = z.infer<typeof quizAnswerSchema>;
 export async function submitQuizAnswers(
   assignmentId: string,
   answers: QuizAnswerInput[],
-): Promise<{ ok: boolean; message: string; score?: number }> {
+): Promise<{ ok: boolean; message: string; score?: number; submittedAt?: string | null }> {
   const currentUser = await getCurrentUser();
   const roleError = assertRole(currentUser, ["student"]);
   if (roleError) return roleError;
-  if (!currentUser) return { ok: false, message: "Tidak diizinkan." };
+  if (!currentUser?.classId)
+    return { ok: false, message: "Belum ada kelas pada tahun ajaran aktif." };
 
-  const parsedAnswers = z.array(quizAnswerSchema).safeParse(answers);
-  if (!z.string().uuid().safeParse(assignmentId).success || !parsedAnswers.success) {
-    return { ok: false, message: "Format jawaban kuis tidak valid." };
-  }
+  const parsedAnswers = z.array(quizAnswerSchema).min(1).max(100).safeParse(answers);
+  if (!z.string().uuid().safeParse(assignmentId).success || !parsedAnswers.success)
+    return {
+      ok: false,
+      message:
+        "Format jawaban kuis tidak valid. Muat ulang jika halaman kuis berasal dari versi lama.",
+    };
   answers = parsedAnswers.data;
 
-  const supabase = await createClient();
-
-  const { data: existing } = await supabase
-    .from("submissions")
-    .select("status")
-    .eq("assignment_id", assignmentId)
-    .eq("student_id", currentUser.id)
-    .maybeSingle();
-  if (existing?.status === "graded") {
-    return { ok: false, message: "Kuis ini sudah pernah kamu kerjakan." };
-  }
-
-  const { data: questions, error: questionsError } = await supabase
-    .from("quiz_questions")
-    .select(
-      "id, question_type, points, correct_answer_text, quiz_options(id, is_correct), quiz_pairs(id), quiz_steps(id, correct_order)",
-    )
-    .eq("assignment_id", assignmentId)
-    .eq("is_active", true);
-
-  if (questionsError || !questions || questions.length === 0) {
-    return { ok: false, message: "Soal tidak ditemukan." };
-  }
-
-  let score = 0;
-  const perQuestionPoints = new Map<string, number>();
-  for (const q of questions) {
-    const ans = answers.find((a) => a.questionId === q.id);
-    if (!ans) continue;
-    let fraction = 0;
-
-    if (q.question_type === "multiple_choice") {
-      const options = q.quiz_options as unknown as { id: string; is_correct: boolean }[];
-      const correctOption = options.find((o) => o.is_correct);
-      fraction = correctOption && ans.selectedOptionId === correctOption.id ? 1 : 0;
-    } else if (q.question_type === "true_false") {
-      fraction =
-        (ans.trueFalseAnswer ?? "").toLowerCase() === (q.correct_answer_text ?? "").toLowerCase()
-          ? 1
-          : 0;
-    } else if (q.question_type === "drag_and_drop") {
-      const pairs = q.quiz_pairs as unknown as { id: string }[];
-      if (pairs.length > 0 && ans.dragDropAnswer) {
-        const correctCount = pairs.filter((p) => ans.dragDropAnswer?.[p.id] === p.id).length;
-        fraction = correctCount / pairs.length;
-      }
-    } else if (q.question_type === "sequence") {
-      const steps = q.quiz_steps as unknown as { id: string; correct_order: number }[];
-      if (steps.length > 0 && ans.sequenceAnswer) {
-        const stepById = new Map(steps.map((s) => [s.id, s.correct_order]));
-        const correctCount = ans.sequenceAnswer.filter(
-          (stepId, idx) => stepById.get(stepId) === idx + 1,
-        ).length;
-        fraction = correctCount / steps.length;
-      }
-    }
-
-    const questionPoints = Math.round(fraction * q.points);
-    perQuestionPoints.set(q.id, questionPoints);
-    score += questionPoints;
-  }
-  const answerRows = questions
-    .map((q) => {
-      const ans = answers.find((a) => a.questionId === q.id);
-      if (!ans) return null;
+  try {
+    const assignment = await getStudentQuizContext(assignmentId, currentUser.classId);
+    if (!assignment) return { ok: false, message: "Kuis tidak tersedia untuk kelasmu." };
+    const client = await createClient();
+    const readSaved = async () => {
+      const result = await client
+        .from("submissions")
+        .select("status, score, submitted_at")
+        .eq("assignment_id", assignmentId)
+        .eq("student_id", currentUser.id)
+        .maybeSingle();
+      if (result.error) throw new Error("Hasil sebelumnya belum terbaca.");
+      return result.data;
+    };
+    const previous = await readSaved();
+    // Recover a committed answer after a lost response, without creating another attempt.
+    if (previous?.status === "graded")
       return {
-        question_id: q.id,
-        selected_option_id: ans.selectedOptionId ?? null,
-        true_false_answer: ans.trueFalseAnswer ?? null,
-        drag_drop_answer: ans.dragDropAnswer ?? null,
-        sequence_answer: ans.sequenceAnswer ?? null,
-        points_earned: perQuestionPoints.get(q.id) ?? 0,
+        ok: true,
+        message: "Jawaban kuis sudah tersimpan.",
+        score: previous.score,
+        submittedAt: previous.submitted_at,
       };
-    })
-    .filter((r): r is NonNullable<typeof r> => r !== null);
+    if (
+      !assignment.is_active ||
+      (assignment.due_at && new Date(assignment.due_at).getTime() <= Date.now())
+    )
+      return { ok: false, message: "Kuis tidak aktif atau tenggat pengerjaannya sudah berakhir." };
 
-  // This server action computes all points; the browser supplies only answers.
-  // The RPC is service-role-only and rechecks eligibility before saving both
-  // the submission and answer rows in one transaction.
-  const admin = createAdminClient();
-  const { error } = await admin.rpc("save_scored_quiz", {
-    p_assignment_id: assignmentId,
-    p_student_id: currentUser.id,
-    p_score: score,
-    p_answers: answerRows,
-  });
-  if (error) {
-    return { ok: false, message: error.message };
+    const questions = await readQuizBank(assignmentId);
+    const bankError = quizBankError(questions);
+    if (bankError)
+      return {
+        ok: false,
+        message: "Susunan soal kuis belum valid. Hubungi guru sebelum mengumpulkan.",
+      };
+    const byId = new Map(answers.map((a) => [a.questionId, a]));
+    if (
+      answers.length !== questions.length ||
+      byId.size !== questions.length ||
+      questions.some((q) => !byId.has(q.id))
+    )
+      return { ok: false, message: "Jawab seluruh soal tepat satu kali sebelum mengumpulkan." };
+
+    let score = 0;
+    const answerRows = [];
+    for (const q of questions) {
+      const ans = byId.get(q.id)!;
+      let fraction = 0;
+      let selectedOptionId: string | null = null;
+      let trueFalseAnswer: string | null = null;
+      let dragDropAnswer: Record<string, string> | null = null;
+      let sequenceAnswer: string[] | null = null;
+      const invalid = {
+        ok: false,
+        message:
+          "Ada jawaban yang belum lengkap atau tidak sesuai soal. Periksa kembali jawabanmu.",
+      };
+      if (q.question_type === "multiple_choice") {
+        const chosen = q.quiz_options.find((o) => o.id === ans.selectedOptionId);
+        if (!chosen) return invalid;
+        selectedOptionId = chosen.id;
+        fraction = chosen.is_correct ? 1 : 0;
+      } else if (q.question_type === "true_false") {
+        if (!ans.trueFalseAnswer) return invalid;
+        trueFalseAnswer = ans.trueFalseAnswer;
+        fraction = trueFalseAnswer === q.correct_answer_text ? 1 : 0;
+      } else if (q.question_type === "drag_and_drop") {
+        const pairs = q.quiz_pairs;
+        const tokenToId = new Map(
+          pairs.map((p) => [quizTargetToken(currentUser.id, assignmentId, p.id), p.id]),
+        );
+        const chosen = ans.dragDropAnswer ?? {};
+        if (
+          Object.keys(chosen).length !== pairs.length ||
+          new Set(Object.values(chosen)).size !== pairs.length ||
+          pairs.some((p) => !tokenToId.has(chosen[p.id]))
+        )
+          return invalid;
+        dragDropAnswer = Object.fromEntries(pairs.map((p) => [p.id, tokenToId.get(chosen[p.id])!]));
+        fraction = pairs.filter((p) => dragDropAnswer![p.id] === p.id).length / pairs.length;
+      } else if (q.question_type === "sequence") {
+        const chosen = ans.sequenceAnswer ?? [];
+        const steps = q.quiz_steps;
+        if (
+          chosen.length !== steps.length ||
+          new Set(chosen).size !== steps.length ||
+          chosen.some((id) => !steps.some((step) => step.id === id))
+        )
+          return invalid;
+        sequenceAnswer = chosen;
+        fraction =
+          chosen.filter((id, i) =>
+            steps.some((step) => step.id === id && step.correct_order === i + 1),
+          ).length / steps.length;
+      }
+      const points = Math.round(fraction * q.points);
+      score += points;
+      answerRows.push({
+        question_id: q.id,
+        selected_option_id: selectedOptionId,
+        true_false_answer: trueFalseAnswer,
+        drag_drop_answer: dragDropAnswer,
+        sequence_answer: sequenceAnswer,
+        points_earned: points,
+      });
+    }
+    const { error } = await createAdminClient().rpc("save_scored_quiz", {
+      p_assignment_id: assignmentId,
+      p_student_id: currentUser.id,
+      p_score: score,
+      p_answers: answerRows,
+    });
+    if (error) {
+      console.error("save_scored_quiz gagal", {
+        code: error.code,
+        message: error.message,
+        details: error.details,
+      });
+      const saved = await readSaved();
+      if (saved?.status === "graded")
+        return {
+          ok: true,
+          message: "Jawaban kuis sudah tersimpan.",
+          score: saved.score,
+          submittedAt: saved.submitted_at,
+        };
+      return {
+        ok: false,
+        message:
+          error.code === "PGRST202"
+            ? "Konfigurasi penyimpanan kuis belum tersedia. Minta admin menjalankan migrasi database terbaru."
+            : ["42501", "55000", "22023"].includes(error.code)
+              ? error.message
+              : "Pengumpulan belum dapat dikonfirmasi. Periksa status pengumpulan sebelum mencoba lagi.",
+      };
+    }
+    revalidatePath("/subjects", "layout");
+    revalidatePath("/assessments");
+    revalidatePath("/dashboard");
+    // The grade is committed. A failed timestamp read must not report it as unsaved.
+    const saved = await readSaved().catch(() => null);
+    return {
+      ok: true,
+      message: "Kuis berhasil dikumpulkan!",
+      score,
+      submittedAt: saved?.submitted_at ?? null,
+    };
+  } catch {
+    return {
+      ok: false,
+      message:
+        "Pengiriman belum dapat dikonfirmasi. Jawaban tetap tersedia; periksa koneksi dan status pengumpulan sebelum mencoba lagi.",
+    };
   }
-
-  revalidatePath("/subjects");
-  return { ok: true, message: "Kuis berhasil dikumpulkan!", score };
 }

@@ -82,6 +82,13 @@ function studentClassLabel(className?: string): string | null {
   return gradeNumber ? `Siswa Kelas ${gradeNumber}` : null;
 }
 
+const ROLE_LABELS: Record<Role, string> = {
+  student: "Siswa",
+  teacher: "Guru",
+  principal: "Kepala Sekolah",
+  admin: "Admin",
+};
+
 export function AppSidebar({
   schoolName,
   logoUrl,
@@ -158,8 +165,11 @@ export function AppSidebar({
           </div>
           <div className="min-w-0 flex-1 group-data-[collapsible=icon]:hidden">
             <div className="truncate text-sm font-medium text-sidebar-foreground">{user.name}</div>
+
             <div className="truncate text-[11px] uppercase tracking-wider text-sidebar-foreground/60">
-              {user.role === "student" ? (studentClassLabel(user.className) ?? "Siswa") : user.role}
+              {user.role === "student"
+                ? (studentClassLabel(user.className) ?? ROLE_LABELS.student)
+                : ROLE_LABELS[user.role]}
             </div>
           </div>
           <Button

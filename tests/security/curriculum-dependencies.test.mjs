@@ -75,6 +75,8 @@ before(async () => {
   `);
   const migrationDir = new URL("../../supabase/migrations/", import.meta.url);
   const newMigration = "20260930000000_curriculum_dependencies.sql";
+  const dataResetMigration = "20261022000000_clear_school_operational_data.sql";
+  const accountImportMigration = "20261022000001_import_teachers_students.sql";
   for (const filename of (await readdir(migrationDir))
     .filter((name) => name.endsWith(".sql"))
     .sort()) {
@@ -152,7 +154,12 @@ before(async () => {
   await db.exec(await readFile(new URL(newMigration, migrationDir), "utf8"));
   afterMigration = await snapshot();
   for (const filename of (await readdir(migrationDir))
-    .filter((name) => name.endsWith(".sql") && name > newMigration)
+    .filter(
+      (name) =>
+        name.endsWith(".sql") &&
+        name > newMigration &&
+        ![dataResetMigration, accountImportMigration].includes(name),
+    )
     .sort()) {
     await db.exec(await readFile(new URL(filename, migrationDir), "utf8"));
   }

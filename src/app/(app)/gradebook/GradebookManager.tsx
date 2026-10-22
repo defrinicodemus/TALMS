@@ -23,11 +23,12 @@ import {
   AlertDialogTitle,
   AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
-import { Download, Eye, Loader2, Lock, LockOpen } from "lucide-react";
+import { AlertTriangle, CheckCircle2, Download, Eye, Loader2, Lock, LockOpen } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { TeacherClassSubject } from "@/lib/data/teaching";
-import type { GradebookData, GradebookStudentRow } from "@/lib/data/gradebook";
-import { lockAndCalculateGrades, unlockGradebook } from "./actions";
+import type { GradebookData, GradebookReadiness, GradebookStudentRow } from "@/lib/data/gradebook";
+import { formatAssignmentTime } from "@/lib/assignmentConstants";
+import { checkGradebookReadiness, lockAndCalculateGrades, unlockGradebook } from "./actions";
 import { StudentHistoryDialog } from "./StudentHistoryDialog";
 
 function comboKey(classId: string, subjectId: string) {
@@ -146,17 +147,25 @@ function GradebookTable({
 
   function handleLock() {
     startTransition(async () => {
-      const result = await lockAndCalculateGrades(classId, subjectId);
-      if (result.ok) toast.success(result.message);
-      else toast.error(result.message);
+      try {
+        const result = await lockAndCalculateGrades(classId, subjectId);
+        if (result.ok) toast.success(result.message);
+        else toast.error(result.message);
+      } catch {
+        toast.error("Buku Nilai belum dapat dikunci. Periksa koneksi lalu coba lagi.");
+      }
     });
   }
 
   function handleUnlock() {
     startTransition(async () => {
-      const result = await unlockGradebook(classId, subjectId);
-      if (result.ok) toast.success(result.message);
-      else toast.error(result.message);
+      try {
+        const result = await unlockGradebook(classId, subjectId);
+        if (result.ok) toast.success(result.message);
+        else toast.error(result.message);
+      } catch {
+        toast.error("Kunci Buku Nilai belum dapat dibuka. Periksa koneksi lalu coba lagi.");
+      }
     });
   }
 
@@ -239,6 +248,8 @@ function GradebookTable({
             <div className="mt-6 hidden justify-end sm:flex">
               <LockControls
                 data={data}
+                classId={classId}
+                subjectId={subjectId}
                 isPending={isPending}
                 onLock={handleLock}
                 onUnlock={handleUnlock}
@@ -260,6 +271,8 @@ function GradebookTable({
         <div className="mt-4 flex justify-end sm:hidden">
           <LockControls
             data={data}
+            classId={classId}
+            subjectId={subjectId}
             isPending={isPending}
             onLock={handleLock}
             onUnlock={handleUnlock}
@@ -272,21 +285,50 @@ function GradebookTable({
 
 function LockControls({
   data,
+  classId,
+  subjectId,
   isPending,
   onLock,
   onUnlock,
 }: {
   data: GradebookData;
+  classId: string;
+  subjectId: string;
   isPending: boolean;
   onLock: () => void;
   onUnlock: () => void;
 }) {
+  const [lockDialogOpen, setLockDialogOpen] = useState(false);
+  const [readiness, setReadiness] = useState<GradebookReadiness | null>(null);
+  const [readinessError, setReadinessError] = useState<string | null>(null);
+  const [isChecking, startChecking] = useTransition();
+
+  function loadReadiness() {
+    setReadiness(null);
+    setReadinessError(null);
+    startChecking(async () => {
+      try {
+        const result = await checkGradebookReadiness(classId, subjectId);
+        if (result.ok) setReadiness(result.data);
+        else setReadinessError(result.message);
+      } catch {
+        setReadinessError("Kesiapan Buku Nilai belum dapat diperiksa. Coba lagi.");
+      }
+    });
+  }
+
+  function handleLockDialogChange(next: boolean) {
+    setLockDialogOpen(next);
+    if (next) loadReadiness();
+  }
+
   return data.isLocked ? (
     <div className="flex flex-wrap items-center gap-3">
       <div className="flex items-center gap-2 rounded-md bg-muted px-4 py-2.5 text-[clamp(0.8125rem,0.76rem+0.22cqw,0.9375rem)] text-muted-foreground">
         <Lock className="size-[clamp(0.875rem,0.8rem+0.4cqw,1.125rem)]" /> Buku nilai dikunci pada{" "}
         {data.lockedAt &&
           new Date(data.lockedAt).toLocaleDateString("id-ID", {
+            timeZone: "Asia/Makassar",
             day: "numeric",
             month: "long",
             year: "numeric",
@@ -318,7 +360,7 @@ function LockControls({
       </AlertDialog>
     </div>
   ) : (
-    <AlertDialog>
+    <AlertDialog open={lockDialogOpen} onOpenChange={handleLockDialogChange}>
       <AlertDialogTrigger asChild>
         <Button
           className="rounded-md bg-red-800 text-[clamp(0.8125rem,0.76rem+0.22cqw,0.9375rem)] text-white hover:bg-red-900"
@@ -330,19 +372,126 @@ function LockControls({
       </AlertDialogTrigger>
       <AlertDialogContent>
         <AlertDialogHeader>
-          <AlertDialogTitle>Kunci dan hitung nilai akhir sekarang?</AlertDialogTitle>
-          <AlertDialogDescription>
-            Semua nilai TP akan dihitung menjadi Nilai Akhir untuk seluruh siswa di kelas ini, dan
-            tidak akan bisa diubah lagi setelahnya. Pastikan semua tugas dan kuis sudah dinilai
-            sebelum mengunci.
+          <AlertDialogTitle>Periksa kesiapan Buku Nilai</AlertDialogTitle>
+          <AlertDialogDescription asChild>
+            <div className="space-y-3 text-left">
+              {isChecking && (
+                <div className="flex items-center gap-2 text-sm">
+                  <Loader2 className="size-4 animate-spin" /> Memeriksa tugas, kuis, dan nilai
+                  siswa...
+                </div>
+              )}
+
+              {!isChecking && readinessError && (
+                <div role="alert" className="space-y-2">
+                  <p>{readinessError}</p>
+                  <Button type="button" variant="outline" size="sm" onClick={loadReadiness}>
+                    Coba Lagi
+                  </Button>
+                </div>
+              )}
+
+              {!isChecking && readiness && <GradebookReadinessSummary readiness={readiness} />}
+            </div>
           </AlertDialogDescription>
         </AlertDialogHeader>
         <AlertDialogFooter>
           <AlertDialogCancel>Batal</AlertDialogCancel>
-          <AlertDialogAction onClick={onLock}>Kunci & Hitung</AlertDialogAction>
+          <AlertDialogAction
+            onClick={onLock}
+            disabled={isChecking || isPending || !readiness?.canLock}
+          >
+            Kunci & Hitung
+          </AlertDialogAction>
         </AlertDialogFooter>
       </AlertDialogContent>
     </AlertDialog>
+  );
+}
+
+function GradebookReadinessSummary({ readiness }: { readiness: GradebookReadiness }) {
+  const hasBlockers =
+    readiness.alreadyLocked ||
+    readiness.studentCount === 0 ||
+    readiness.assessmentCount === 0 ||
+    readiness.openActivities.length > 0 ||
+    readiness.ungradedActivities.length > 0 ||
+    readiness.unlinkedActivities.length > 0;
+
+  return (
+    <div className="space-y-3 text-sm">
+      {readiness.canLock ? (
+        <div className="flex gap-2 rounded-md bg-primary-soft/50 p-3 text-foreground">
+          <CheckCircle2 className="mt-0.5 size-4 shrink-0 text-primary" />
+          <p>
+            Buku Nilai siap dikunci. Nilai akhir akan dihitung untuk {readiness.studentCount} siswa.
+          </p>
+        </div>
+      ) : (
+        <div className="flex gap-2 rounded-md bg-destructive/10 p-3 text-foreground">
+          <AlertTriangle className="mt-0.5 size-4 shrink-0 text-destructive" />
+          <p>Selesaikan kondisi berikut sebelum mengunci Buku Nilai.</p>
+        </div>
+      )}
+
+      {hasBlockers && (
+        <ul className="list-disc space-y-1 pl-5 text-foreground">
+          {readiness.alreadyLocked && <li>Buku Nilai sudah dikunci.</li>}
+          {readiness.studentCount === 0 && <li>Kelas belum memiliki siswa.</li>}
+          {readiness.assessmentCount === 0 && (
+            <li>Belum ada tugas atau kuis aktif yang terhubung dengan TP.</li>
+          )}
+          {readiness.openActivities.map((activity) => (
+            <li key={`open-${activity.assignmentId}`}>
+              {activity.title} masih terbuka
+              {activity.dueAt
+                ? ` sampai ${formatAssignmentTime(activity.dueAt)}`
+                : " tanpa tenggat"}
+              .
+            </li>
+          ))}
+          {readiness.ungradedActivities.map((activity) => (
+            <li key={`ungraded-${activity.assignmentId}`}>
+              {activity.submissionCount ?? 0} jawaban pada {activity.title} belum dinilai.
+            </li>
+          ))}
+          {readiness.unlinkedActivities.map((activity) => (
+            <li key={`unlinked-${activity.assignmentId}`}>
+              {activity.title} belum terhubung dengan TP.
+            </li>
+          ))}
+        </ul>
+      )}
+
+      {readiness.missingActivities.length > 0 && (
+        <div className="rounded-md border border-warning/40 bg-warning/10 p-3 text-foreground">
+          <p className="font-medium">Siswa yang tidak mengumpulkan akan memperoleh nilai 0:</p>
+          <ul className="mt-1 list-disc space-y-1 pl-5">
+            {readiness.missingActivities.map((activity) => (
+              <li key={`missing-${activity.assignmentId}`}>
+                {activity.title}: {(activity.studentNames ?? []).join(", ")}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+
+      {readiness.unassessedObjectives.length > 0 && (
+        <div className="rounded-md bg-muted p-3 text-foreground">
+          <p>
+            TP berikut belum memiliki aktivitas penilaian dan tidak ikut dihitung:{" "}
+            {readiness.unassessedObjectives.map((objective) => objective.title).join(", ")}.
+          </p>
+        </div>
+      )}
+
+      {readiness.canLock && (
+        <p>
+          Setelah dikunci, pengumpulan siswa serta perubahan tugas, kuis, dan nilai akan ditutup
+          sampai Guru membuka kembali Buku Nilai.
+        </p>
+      )}
+    </div>
   );
 }
 

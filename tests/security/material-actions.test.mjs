@@ -151,6 +151,7 @@ function setup(options = {}) {
     },
     "@/lib/data/profile": { getCurrentUser: async () => state.user },
     "@/lib/data/subjects": {},
+    "@/lib/quizServer": {},
     "next/cache": { revalidatePath: (...args) => state.invalidated.push(args) },
     "next/navigation": { redirect: () => assert.fail("Unexpected redirect") },
   };

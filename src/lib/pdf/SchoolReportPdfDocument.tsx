@@ -129,7 +129,7 @@ const styles = StyleSheet.create({
   },
 });
 
-function SummaryBox({ label, value }: { label: string; value: number }) {
+function SummaryBox({ label, value }: { label: string; value: number | string }) {
   return (
     <View style={styles.summaryBox}>
       <Text style={styles.summaryLabel}>{label}</Text>
@@ -184,6 +184,13 @@ export function SchoolReportPdfDocument({
   printedAt,
   data,
 }: SchoolReportPdfProps) {
+  const formatFraction = (
+    actual: number,
+    expected: number,
+    percent: number | null,
+    emptyLabel: string,
+  ) => (percent == null ? emptyLabel : `${actual}/${expected} (${percent}%)`);
+
   const teacherRows = data.teacherRows.map((t) => [
     t.name,
     String(t.materiCount),
@@ -196,10 +203,12 @@ export function SchoolReportPdfDocument({
   const classRows = data.classRows.map((c) => [
     c.className,
     String(c.studentCount),
-    `${c.attendanceHadir}/${c.attendanceTotal} (${c.attendancePercent}%)`,
-    `${c.tugasActual}/${c.tugasExpected} (${c.tugasCompletionPercent}%)`,
-    `${c.kuisActual}/${c.kuisExpected} (${c.kuisCompletionPercent}%)`,
-    String(c.averageGradePercent),
+    formatFraction(c.attendanceHadir, c.attendanceTotal, c.attendancePercent, "Belum ada presensi"),
+    formatFraction(c.tugasActual, c.tugasExpected, c.tugasCompletionPercent, "Belum ada tugas"),
+    formatFraction(c.kuisActual, c.kuisExpected, c.kuisCompletionPercent, "Belum ada kuis"),
+    c.averageGradePercent == null
+      ? `— (${c.finalGradebookCount}/${c.totalGradebookCount} final)`
+      : `${c.averageGradePercent} (${c.finalGradebookCount}/${c.totalGradebookCount} final)`,
   ]);
 
   return (
@@ -229,7 +238,11 @@ export function SchoolReportPdfDocument({
         <View style={styles.summaryRow}>
           <SummaryBox label="Total Guru Aktif" value={data.totalGuruAktif} />
           <SummaryBox label="Total Siswa Aktif" value={data.totalSiswaAktif} />
-          <SummaryBox label="Materi Dipublikasikan" value={data.materiPublishedCount} />
+          <SummaryBox label="Materi Aktif" value={data.materiPublishedCount} />
+          <SummaryBox
+            label="Buku Nilai Final"
+            value={`${data.finalGradebookCount}/${data.totalGradebookCount}`}
+          />
         </View>
 
         <Text style={styles.sectionTitle}>2. Aktivitas Pembelajaran</Text>
@@ -249,7 +262,7 @@ export function SchoolReportPdfDocument({
             "Kehadiran",
             "Penyelesaian Tugas",
             "Penyelesaian Kuis",
-            "Nilai Rata-rata",
+            "Nilai Final (Buku Nilai)",
           ]}
           widths={[16, 14, 18, 18, 18, 16]}
           rows={classRows}

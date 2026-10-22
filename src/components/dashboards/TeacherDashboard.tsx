@@ -91,7 +91,7 @@ export function TeacherDashboard({
     () =>
       data.attendanceSummary.map((item) => ({
         ...item,
-        label: `${item.subjectName.toLowerCase()}.${item.className.toLowerCase()}`,
+        label: `${item.subjectCode}.${item.className.toLowerCase()}`,
       })),
     [data.attendanceSummary],
   );
@@ -158,29 +158,41 @@ export function TeacherDashboard({
           {chartData.length === 0 ? (
             <p className="mt-4 text-sm text-muted-foreground">Belum ada data kehadiran.</p>
           ) : (
-            <div className="mt-4 h-64">
-              <ResponsiveContainer width="100%" height="100%">
-                <BarChart
-                  data={chartData}
-                  margin={{ top: 4, right: 8, left: 8, bottom: 8 }}
-                  barCategoryGap="20%"
-                >
-                  <XAxis
-                    dataKey="label"
-                    tickLine={false}
-                    axisLine={false}
-                    interval={0}
-                    height={36}
-                    tick={<TwoLineTick />}
-                  />
-                  <YAxis hide domain={[0, 100]} width={0} />
-                  <Tooltip
-                    content={<AttendanceSummaryTooltip />}
-                    cursor={{ fill: "var(--color-primary-soft)", opacity: 0.4 }}
-                  />
-                  <Bar dataKey="hadirPercent" radius={[4, 4, 0, 0]} fill="var(--color-primary)" />
-                </BarChart>
-              </ResponsiveContainer>
+            <div
+              className="mt-4 overflow-x-auto overscroll-x-contain pb-2"
+              role="region"
+              aria-label="Grafik ringkasan kehadiran mata pelajaran"
+              tabIndex={0}
+            >
+              <div className="h-64" style={{ width: `max(100%, ${chartData.length * 110}px)` }}>
+                <ResponsiveContainer width="100%" height="100%">
+                  <BarChart
+                    data={chartData}
+                    margin={{ top: 4, right: 8, left: 8, bottom: 8 }}
+                    barCategoryGap="20%"
+                  >
+                    <XAxis
+                      dataKey="label"
+                      tickLine={false}
+                      axisLine={false}
+                      interval={0}
+                      height={36}
+                      tick={<TwoLineTick />}
+                    />
+                    <YAxis hide domain={[0, 100]} width={0} />
+                    <Tooltip
+                      content={<AttendanceSummaryTooltip />}
+                      cursor={{ fill: "var(--color-primary-soft)", opacity: 0.4 }}
+                    />
+                    <Bar
+                      dataKey="hadirPercent"
+                      barSize={36}
+                      radius={[4, 4, 0, 0]}
+                      fill="var(--color-primary)"
+                    />
+                  </BarChart>
+                </ResponsiveContainer>
+              </div>
             </div>
           )}
         </Card>

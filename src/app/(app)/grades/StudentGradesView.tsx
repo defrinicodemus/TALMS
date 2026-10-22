@@ -6,9 +6,15 @@ import { ChevronDown } from "lucide-react";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { PageHeader } from "@/components/PageHeader";
-import type { StudentSubjectGrade } from "@/lib/data/gradebook";
+import type { StudentGradeContext, StudentSubjectGrade } from "@/lib/data/gradebook";
 
-export function StudentGradesView({ subjects }: { subjects: StudentSubjectGrade[] }) {
+export function StudentGradesView({
+  subjects,
+  context,
+}: {
+  subjects: StudentSubjectGrade[];
+  context: StudentGradeContext | null;
+}) {
   return (
     <div className="space-y-6">
       <PageHeader
@@ -17,6 +23,17 @@ export function StudentGradesView({ subjects }: { subjects: StudentSubjectGrade[
         subtitle="Pantau capaian nilai kamu di setiap mata pelajaran, lengkap dengan rincian per Tujuan Pembelajaran (TP)."
       />
 
+      {context && (
+        <div className="rounded-2xl bg-muted/50 px-4 py-3 text-sm text-muted-foreground">
+          <span className="font-semibold text-foreground">{context.className}</span>
+          <span> · {context.periodLabel}</span>
+          <p className="mt-1 text-xs">
+            Nilai sementara dihitung dari aktivitas dan TP yang sudah masuk penilaian. Nilai final
+            ditampilkan setelah Buku Nilai dikunci oleh guru.
+          </p>
+        </div>
+      )}
+
       <div className="grid gap-3 md:grid-cols-2 md:items-start">
         {subjects.map((s) => (
           <SubjectGradeCard key={s.subjectId} subject={s} />
@@ -24,7 +41,9 @@ export function StudentGradesView({ subjects }: { subjects: StudentSubjectGrade[
         {subjects.length === 0 && (
           <Card className="rounded-3xl border-0 p-10 text-center shadow-soft md:col-span-2">
             <p className="text-sm text-muted-foreground">
-              Belum ada mata pelajaran yang terdaftar untuk kelasmu.
+              {context
+                ? "Belum ada mata pelajaran yang tersedia untuk kelasmu."
+                : "Kamu belum ditempatkan pada kelas di tahun ajaran aktif."}
             </p>
           </Card>
         )}
@@ -115,10 +134,10 @@ function SubjectGradeCard({ subject: s }: { subject: StudentSubjectGrade }) {
           <ChevronDown
             className={`h-3.5 w-3.5 transition-transform ${expanded ? "rotate-180" : ""}`}
           />
-          {expanded ? "Sembunyikan" : "Lihat Detail"}
+          {expanded ? "Sembunyikan" : "Ringkasan TP"}
         </button>
         <Button asChild size="sm" variant="outline" className="rounded-xl">
-          <Link href={`/grades/${s.subjectId}`}>Lihat Detail Nilai</Link>
+          <Link href={`/grades/${s.subjectId}`}>Rincian Nilai</Link>
         </Button>
       </div>
     </Card>

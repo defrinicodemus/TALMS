@@ -336,6 +336,8 @@ function refreshAssignments() {
   revalidatePath("/curriculum");
   revalidatePath("/subjects", "layout");
   revalidatePath("/assessments");
+  revalidatePath("/gradebook");
+  revalidatePath("/grades", "layout");
   revalidatePath("/dashboard");
 }
 
@@ -550,8 +552,30 @@ export async function setAssignmentActive(
   if (roleError) return roleError;
 
   const supabase = await createClient();
-  if (!currentUser || !(await managedAssignment(supabase, currentUser.id, id)))
-    return { ok: false, message: "Tugas tidak sesuai penugasanmu." };
+  const task = currentUser ? await managedAssignment(supabase, currentUser.id, id) : null;
+  if (!task) return { ok: false, message: "Tugas tidak sesuai penugasanmu." };
+  if (!isActive) {
+    const { count, error: countError } = await supabase
+      .from("submissions")
+      .select("id", { count: "exact", head: true })
+      .eq("assignment_id", id);
+    if (countError || count == null)
+      return {
+        ok: false,
+        message: "Pengumpulan siswa belum dapat diperiksa. Status tidak diubah.",
+      };
+    if (count > 0)
+      return {
+        ok: false,
+        message:
+          "Tugas tidak dapat dinonaktifkan karena sudah memiliki pengumpulan siswa. Gunakan tenggat untuk menutup pengumpulan.",
+      };
+  } else if (!task.due_at || new Date(task.due_at).getTime() <= Date.now()) {
+    return {
+      ok: false,
+      message: "Perpanjang tenggat tugas sebelum mengaktifkannya kembali.",
+    };
+  }
   const { data, error } = await supabase
     .from("assignments")
     .update({ is_published: isActive })
@@ -656,22 +680,22 @@ export async function createQuiz(formData: FormData): Promise<{ ok: boolean; mes
     return { ok: false, message: "Tidak diizinkan." };
   }
 
-  const dueAt = new Date(`${dueDate}T${dueTime}:00`);
-  if (Number.isNaN(dueAt.getTime())) {
+  const dueAt = parseAssignmentDeadline(dueDate, dueTime);
+  if (!dueAt) {
     return { ok: false, message: "Tenggat kuis tidak valid." };
   }
-  if (dueAt.getTime() < Date.now()) {
+  if (new Date(dueAt).getTime() < Date.now()) {
     return { ok: false, message: "Tenggat kuis tidak boleh tanggal/waktu yang sudah lewat." };
   }
 
   const timerMinutes = timerRaw ? Number(timerRaw) : null;
-  if (timerMinutes !== null && (!Number.isFinite(timerMinutes) || timerMinutes <= 0)) {
+  if (timerMinutes !== null && (!Number.isInteger(timerMinutes) || timerMinutes <= 0)) {
     return { ok: false, message: "Estimasi waktu pengerjaan tidak valid." };
   }
   const passingGrade = kkmRaw ? Number(kkmRaw) : null;
   if (
     passingGrade !== null &&
-    (!Number.isFinite(passingGrade) || passingGrade < 0 || passingGrade > 100)
+    (!Number.isInteger(passingGrade) || passingGrade < 0 || passingGrade > 100)
   ) {
     return { ok: false, message: "Passing grade (KKM) harus di antara 0-100." };
   }
@@ -687,7 +711,7 @@ export async function createQuiz(formData: FormData): Promise<{ ok: boolean; mes
     kind: "quiz",
     quiz_type: quizType,
     description,
-    due_at: dueAt.toISOString(),
+    due_at: dueAt,
     timer_minutes: timerMinutes,
     passing_grade: passingGrade,
     learning_objective_id: learningObjectiveId,
@@ -716,46 +740,68 @@ export async function updateQuiz(formData: FormData): Promise<{ ok: boolean; mes
   const kkmRaw = String(formData.get("passing_grade") ?? "").trim();
 
   if (!id || !title) return { ok: false, message: "Judul wajib diisi." };
-  if (!QUIZ_TYPES.includes(quizType)) return { ok: false, message: "Tipe kuis wajib dipilih." };
-  if (!learningObjectiveId) {
+  const supabase = await createClient();
+  const { data: current, error: readError } = await supabase
+    .from("assignments")
+    .select("id, is_published")
+    .eq("id", id)
+    .eq("kind", "quiz")
+    .eq("teacher_id", currentUser!.id)
+    .maybeSingle();
+  if (readError || !current)
+    return { ok: false, message: "Kuis tidak ditemukan atau belum dapat dibaca." };
+
+  if (!current.is_published && !QUIZ_TYPES.includes(quizType))
+    return { ok: false, message: "Tipe kuis wajib dipilih." };
+  if (!current.is_published && !learningObjectiveId) {
     return { ok: false, message: "Tujuan Pembelajaran (TP) wajib dipilih." };
   }
   if (!dueDate || !dueTime) {
     return { ok: false, message: "Tenggat kuis wajib diisi." };
   }
 
-  const dueAt = new Date(`${dueDate}T${dueTime}:00`);
-  if (Number.isNaN(dueAt.getTime())) {
+  const dueAt = parseAssignmentDeadline(dueDate, dueTime);
+  if (!dueAt) {
     return { ok: false, message: "Tenggat kuis tidak valid." };
   }
 
   const timerMinutes = timerRaw ? Number(timerRaw) : null;
-  if (timerMinutes !== null && (!Number.isFinite(timerMinutes) || timerMinutes <= 0)) {
+  if (
+    !current.is_published &&
+    timerMinutes !== null &&
+    (!Number.isInteger(timerMinutes) || timerMinutes <= 0)
+  ) {
     return { ok: false, message: "Estimasi waktu pengerjaan tidak valid." };
   }
   const passingGrade = kkmRaw ? Number(kkmRaw) : null;
   if (
+    !current.is_published &&
     passingGrade !== null &&
-    (!Number.isFinite(passingGrade) || passingGrade < 0 || passingGrade > 100)
+    (!Number.isInteger(passingGrade) || passingGrade < 0 || passingGrade > 100)
   ) {
     return { ok: false, message: "Passing grade (KKM) harus di antara 0-100." };
   }
 
   const description = richTextIsEmpty(rawDescription) ? null : sanitizeRichText(rawDescription);
 
-  const supabase = await createClient();
   const { error } = await supabase
     .from("assignments")
     .update({
       title,
-      quiz_type: quizType,
+      ...(!current.is_published
+        ? {
+            quiz_type: quizType,
+            timer_minutes: timerMinutes,
+            passing_grade: passingGrade,
+            learning_objective_id: learningObjectiveId,
+          }
+        : {}),
       description,
-      due_at: dueAt.toISOString(),
-      timer_minutes: timerMinutes,
-      passing_grade: passingGrade,
-      learning_objective_id: learningObjectiveId,
+      due_at: dueAt,
     })
-    .eq("id", id);
+    .eq("id", id)
+    .eq("kind", "quiz")
+    .eq("teacher_id", currentUser!.id);
   if (error) return { ok: false, message: error.message };
 
   revalidatePath("/classroom");
@@ -773,11 +819,45 @@ export async function setQuizActive(
   if (roleError) return roleError;
 
   const supabase = await createClient();
-  const { error } = await supabase.from("assignments").update({ is_active: isActive }).eq("id", id);
+  const { data: quiz, error: quizError } = await supabase
+    .from("assignments")
+    .select("id, due_at")
+    .eq("id", id)
+    .eq("kind", "quiz")
+    .eq("teacher_id", currentUser!.id)
+    .maybeSingle();
+  if (quizError || !quiz) return { ok: false, message: "Kuis tidak ditemukan." };
+  if (!isActive) {
+    const { count, error: countError } = await supabase
+      .from("submissions")
+      .select("id", { count: "exact", head: true })
+      .eq("assignment_id", id);
+    if (countError || count == null)
+      return { ok: false, message: "Jawaban siswa belum dapat diperiksa. Status tidak diubah." };
+    if (count > 0)
+      return {
+        ok: false,
+        message:
+          "Kuis tidak dapat dinonaktifkan karena sudah memiliki jawaban siswa. Gunakan tenggat untuk menutup pengerjaan.",
+      };
+  } else if (!quiz.due_at || new Date(quiz.due_at).getTime() <= Date.now()) {
+    return {
+      ok: false,
+      message: "Perpanjang tenggat kuis sebelum mengaktifkannya kembali.",
+    };
+  }
+  const { data, error } = await supabase
+    .from("assignments")
+    .update({ is_active: isActive })
+    .eq("id", id)
+    .eq("kind", "quiz")
+    .eq("teacher_id", currentUser!.id)
+    .select("id")
+    .maybeSingle();
+  if (!error && !data) return { ok: false, message: "Kuis tidak ditemukan." };
   if (error) return { ok: false, message: error.message };
 
-  revalidatePath("/classroom");
-  revalidatePath("/subjects");
+  refreshAssignments();
   return {
     ok: true,
     message: isActive ? "Kuis diaktifkan kembali." : "Kuis dinonaktifkan dari tampilan siswa.",
@@ -791,11 +871,12 @@ export async function publishQuiz(id: string): Promise<{ ok: boolean; message: s
 
   const supabase = await createClient();
 
-  const { data: questions } = await supabase
+  const { data: questions, error: questionsError } = await supabase
     .from("quiz_questions")
     .select("points")
     .eq("assignment_id", id)
     .eq("is_active", true);
+  if (questionsError) return { ok: false, message: "Soal belum dapat dibaca. Coba lagi." };
   const totalPoints = (questions ?? []).reduce((sum, q) => sum + q.points, 0);
   if (totalPoints !== 100) {
     const remaining = Math.max(0, 100 - totalPoints);
@@ -808,7 +889,15 @@ export async function publishQuiz(id: string): Promise<{ ok: boolean; message: s
     };
   }
 
-  const { error } = await supabase.from("assignments").update({ is_published: true }).eq("id", id);
+  const { data, error } = await supabase
+    .from("assignments")
+    .update({ is_published: true })
+    .eq("id", id)
+    .eq("kind", "quiz")
+    .eq("teacher_id", currentUser!.id)
+    .select("id")
+    .maybeSingle();
+  if (!error && !data) return { ok: false, message: "Kuis tidak ditemukan." };
   if (error) return { ok: false, message: error.message };
 
   revalidatePath("/classroom");
@@ -823,10 +912,12 @@ export async function deleteQuiz(id: string): Promise<{ ok: boolean; message: st
 
   const supabase = await createClient();
 
-  const { count } = await supabase
+  const { count, error: countError } = await supabase
     .from("submissions")
     .select("id", { count: "exact", head: true })
     .eq("assignment_id", id);
+  if (countError)
+    return { ok: false, message: "Pengumpulan siswa belum dapat diperiksa. Coba lagi." };
   if (count) {
     return {
       ok: false,
@@ -834,7 +925,15 @@ export async function deleteQuiz(id: string): Promise<{ ok: boolean; message: st
     };
   }
 
-  const { error } = await supabase.from("assignments").delete().eq("id", id);
+  const { data, error } = await supabase
+    .from("assignments")
+    .delete()
+    .eq("id", id)
+    .eq("kind", "quiz")
+    .eq("teacher_id", currentUser!.id)
+    .select("id")
+    .maybeSingle();
+  if (!error && !data) return { ok: false, message: "Kuis tidak ditemukan." };
   if (error) return { ok: false, message: error.message };
 
   revalidatePath("/classroom");
@@ -843,21 +942,6 @@ export async function deleteQuiz(id: string): Promise<{ ok: boolean; message: st
 }
 
 const QUESTION_TYPES = ["multiple_choice", "true_false", "drag_and_drop", "sequence"];
-
-async function sumActiveQuestionPoints(
-  supabase: Awaited<ReturnType<typeof createClient>>,
-  assignmentId: string,
-  excludeQuestionId?: string,
-): Promise<number> {
-  const { data } = await supabase
-    .from("quiz_questions")
-    .select("id, points")
-    .eq("assignment_id", assignmentId)
-    .eq("is_active", true);
-  return (data ?? [])
-    .filter((q) => q.id !== excludeQuestionId)
-    .reduce((sum, q) => sum + q.points, 0);
-}
 
 interface ParsedQuestionAnswer {
   correctAnswerText: string | null;
@@ -899,6 +983,11 @@ function parseQuestionAnswer(
     const targetTexts = formData.getAll("pair_target_text").map((v) => String(v).trim());
     const pairs: { dragText: string; targetText: string }[] = [];
     for (let i = 0; i < Math.max(dragTexts.length, targetTexts.length); i++) {
+      if (!!dragTexts[i] !== !!targetTexts[i])
+        return {
+          ok: false,
+          message: "Lengkapi kedua sisi setiap pasangan atau kosongkan keduanya.",
+        };
       if (dragTexts[i] && targetTexts[i]) {
         pairs.push({ dragText: dragTexts[i], targetText: targetTexts[i] });
       }
@@ -921,181 +1010,66 @@ function parseQuestionAnswer(
   return { ok: false, message: "Tipe soal tidak valid." };
 }
 
-export async function addQuizQuestion(
+async function saveQuizQuestion(
   formData: FormData,
+  editing: boolean,
 ): Promise<{ ok: boolean; message: string }> {
   const currentUser = await getCurrentUser();
   const roleError = assertRole(currentUser, ["teacher"]);
   if (roleError) return roleError;
-
-  const assignmentId = String(formData.get("assignment_id") ?? "");
-  const questionText = String(formData.get("question_text") ?? "").trim();
-  const questionType = String(formData.get("question_type") ?? "");
-  const points = Number(formData.get("points") ?? 0);
-  const explanation = String(formData.get("explanation") ?? "").trim();
-
-  if (!assignmentId || !questionText) {
-    return { ok: false, message: "Pertanyaan wajib diisi." };
-  }
-  if (!QUESTION_TYPES.includes(questionType)) {
-    return { ok: false, message: "Tipe soal tidak valid." };
-  }
-  if (!Number.isFinite(points) || points <= 0 || points > 100) {
-    return { ok: false, message: "Bobot poin harus antara 1-100." };
-  }
-
-  const parsed = parseQuestionAnswer(formData, questionType);
-  if (!parsed.ok) return { ok: false, message: parsed.message };
-  const { correctAnswerText, options, pairs, steps } = parsed.data;
-
-  const supabase = await createClient();
-  const usedPoints = await sumActiveQuestionPoints(supabase, assignmentId);
-  if (usedPoints + points > 100) {
-    return { ok: false, message: `Kuota poin tidak cukup. Sisa kuota: ${100 - usedPoints} poin.` };
-  }
-
-  const { count } = await supabase
-    .from("quiz_questions")
-    .select("id", { count: "exact", head: true })
-    .eq("assignment_id", assignmentId);
-
-  const { data: question, error } = await supabase
-    .from("quiz_questions")
-    .insert({
-      assignment_id: assignmentId,
-      question_text: questionText,
-      question_type: questionType,
-      correct_answer_text: correctAnswerText,
-      points,
-      explanation: explanation || null,
-      sort_order: count ?? 0,
-    })
-    .select("id")
-    .single();
-  if (error || !question) return { ok: false, message: error?.message ?? "Gagal menyimpan soal." };
-
-  if (options.length > 0) {
-    const { error: optionsError } = await supabase.from("quiz_options").insert(
-      options.map((o, i) => ({
-        question_id: question.id,
-        option_text: o.text,
-        is_correct: o.isCorrect,
-        sort_order: i,
-      })),
-    );
-    if (optionsError) return { ok: false, message: optionsError.message };
-  }
-  if (pairs.length > 0) {
-    const { error: pairsError } = await supabase.from("quiz_pairs").insert(
-      pairs.map((p, i) => ({
-        question_id: question.id,
-        drag_text: p.dragText,
-        target_text: p.targetText,
-        sort_order: i,
-      })),
-    );
-    if (pairsError) return { ok: false, message: pairsError.message };
-  }
-  if (steps.length > 0) {
-    const { error: stepsError } = await supabase
-      .from("quiz_steps")
-      .insert(
-        steps.map((s, i) => ({ question_id: question.id, step_text: s, correct_order: i + 1 })),
-      );
-    if (stepsError) return { ok: false, message: stepsError.message };
-  }
-
-  revalidatePath("/classroom");
-  return { ok: true, message: "Soal berhasil ditambahkan." };
-}
-
-export async function updateQuizQuestion(
-  formData: FormData,
-): Promise<{ ok: boolean; message: string }> {
-  const currentUser = await getCurrentUser();
-  const roleError = assertRole(currentUser, ["teacher"]);
-  if (roleError) return roleError;
-
   const id = String(formData.get("id") ?? "");
+  let assignmentId = String(formData.get("assignment_id") ?? "");
   const questionText = String(formData.get("question_text") ?? "").trim();
   const questionType = String(formData.get("question_type") ?? "");
   const points = Number(formData.get("points") ?? 0);
   const explanation = String(formData.get("explanation") ?? "").trim();
-
-  if (!id || !questionText) return { ok: false, message: "Pertanyaan wajib diisi." };
-  if (!QUESTION_TYPES.includes(questionType)) {
+  if (!questionText || questionText.length > 20000 || explanation.length > 20000)
+    return { ok: false, message: "Isi pertanyaan dan batasi teks hingga 20.000 karakter." };
+  if (!QUESTION_TYPES.includes(questionType))
     return { ok: false, message: "Tipe soal tidak valid." };
-  }
-  if (!Number.isFinite(points) || points <= 0 || points > 100) {
-    return { ok: false, message: "Bobot poin harus antara 1-100." };
-  }
-
+  if (!Number.isInteger(points) || points <= 0 || points > 100)
+    return { ok: false, message: "Bobot poin harus berupa bilangan bulat antara 1-100." };
   const parsed = parseQuestionAnswer(formData, questionType);
-  if (!parsed.ok) return { ok: false, message: parsed.message };
-  const { correctAnswerText, options, pairs, steps } = parsed.data;
-
+  if (!parsed.ok) return parsed;
   const supabase = await createClient();
-  const { data: current } = await supabase
-    .from("quiz_questions")
-    .select("assignment_id")
-    .eq("id", id)
-    .single();
-  if (!current) return { ok: false, message: "Soal tidak ditemukan." };
-
-  const usedByOthers = await sumActiveQuestionPoints(supabase, current.assignment_id, id);
-  if (usedByOthers + points > 100) {
+  if (editing) {
+    if (!z.string().uuid().safeParse(id).success)
+      return { ok: false, message: "Soal tidak valid." };
+    const { data, error } = await supabase
+      .from("quiz_questions")
+      .select("assignment_id")
+      .eq("id", id)
+      .maybeSingle();
+    if (error || !data)
+      return { ok: false, message: "Soal tidak ditemukan atau belum dapat dibaca." };
+    assignmentId = data.assignment_id;
+  }
+  if (!z.string().uuid().safeParse(assignmentId).success)
+    return { ok: false, message: "Kuis tidak valid." };
+  const { error } = await supabase.rpc("save_quiz_question", {
+    p_assignment_id: assignmentId,
+    p_question_id: editing ? id : null,
+    p_question: { questionText, questionType, points, explanation, ...parsed.data },
+  });
+  if (error)
     return {
       ok: false,
-      message: `Kuota poin tidak cukup. Sisa kuota: ${100 - usedByOthers} poin.`,
+      message: ["22023", "42501", "55000"].includes(error.code)
+        ? error.message
+        : "Soal belum tersimpan. Isian tetap tersedia; coba lagi.",
     };
-  }
-
-  const { error } = await supabase
-    .from("quiz_questions")
-    .update({
-      question_text: questionText,
-      points,
-      explanation: explanation || null,
-      correct_answer_text: correctAnswerText,
-    })
-    .eq("id", id);
-  if (error) return { ok: false, message: error.message };
-
-  await supabase.from("quiz_options").delete().eq("question_id", id);
-  await supabase.from("quiz_pairs").delete().eq("question_id", id);
-  await supabase.from("quiz_steps").delete().eq("question_id", id);
-
-  if (options.length > 0) {
-    const { error: optionsError } = await supabase.from("quiz_options").insert(
-      options.map((o, i) => ({
-        question_id: id,
-        option_text: o.text,
-        is_correct: o.isCorrect,
-        sort_order: i,
-      })),
-    );
-    if (optionsError) return { ok: false, message: optionsError.message };
-  }
-  if (pairs.length > 0) {
-    const { error: pairsError } = await supabase.from("quiz_pairs").insert(
-      pairs.map((p, i) => ({
-        question_id: id,
-        drag_text: p.dragText,
-        target_text: p.targetText,
-        sort_order: i,
-      })),
-    );
-    if (pairsError) return { ok: false, message: pairsError.message };
-  }
-  if (steps.length > 0) {
-    const { error: stepsError } = await supabase
-      .from("quiz_steps")
-      .insert(steps.map((s, i) => ({ question_id: id, step_text: s, correct_order: i + 1 })));
-    if (stepsError) return { ok: false, message: stepsError.message };
-  }
-
   revalidatePath("/classroom");
-  return { ok: true, message: "Soal berhasil diperbarui." };
+  return {
+    ok: true,
+    message: editing ? "Soal berhasil diperbarui." : "Soal berhasil ditambahkan.",
+  };
+}
+
+export async function addQuizQuestion(formData: FormData) {
+  return saveQuizQuestion(formData, false);
+}
+export async function updateQuizQuestion(formData: FormData) {
+  return saveQuizQuestion(formData, true);
 }
 
 export async function setQuizQuestionActive(
@@ -1106,12 +1080,16 @@ export async function setQuizQuestionActive(
   const roleError = assertRole(currentUser, ["teacher"]);
   if (roleError) return roleError;
 
+  if (!z.string().uuid().safeParse(id).success) return { ok: false, message: "Soal tidak valid." };
   const supabase = await createClient();
-  const { error } = await supabase
+  const { data, error } = await supabase
     .from("quiz_questions")
     .update({ is_active: isActive })
-    .eq("id", id);
+    .eq("id", id)
+    .select("id")
+    .maybeSingle();
   if (error) return { ok: false, message: error.message };
+  if (!data) return { ok: false, message: "Soal tidak ditemukan atau tidak dapat diubah." };
 
   revalidatePath("/classroom");
   return { ok: true, message: isActive ? "Soal diaktifkan kembali." : "Soal dinonaktifkan." };
@@ -1122,9 +1100,16 @@ export async function deleteQuizQuestion(id: string): Promise<{ ok: boolean; mes
   const roleError = assertRole(currentUser, ["teacher"]);
   if (roleError) return roleError;
 
+  if (!z.string().uuid().safeParse(id).success) return { ok: false, message: "Soal tidak valid." };
   const supabase = await createClient();
-  const { error } = await supabase.from("quiz_questions").delete().eq("id", id);
+  const { data, error } = await supabase
+    .from("quiz_questions")
+    .delete()
+    .eq("id", id)
+    .select("id")
+    .maybeSingle();
   if (error) return { ok: false, message: error.message };
+  if (!data) return { ok: false, message: "Soal tidak ditemukan atau tidak dapat diubah." };
 
   revalidatePath("/classroom");
   return { ok: true, message: "Soal berhasil dihapus." };

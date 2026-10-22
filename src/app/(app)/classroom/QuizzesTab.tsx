@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useTransition } from "react";
+import { assignmentTimeInputs, formatAssignmentTime } from "@/lib/assignmentConstants";
 import { toast } from "sonner";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -92,23 +93,26 @@ const QUESTION_TYPE_OPTIONS: { value: BuilderQuestionType; label: string }[] = [
 const ADD_QUIZ_KEY = "__add_quiz__";
 const ADD_QUESTION_KEY = "__add_question__";
 
-function pad(n: number) {
-  return String(n).padStart(2, "0");
+async function requestQuizChange(action: () => Promise<{ ok: boolean; message: string }>) {
+  try {
+    return await action();
+  } catch {
+    return {
+      ok: false,
+      message:
+        "Perubahan belum dapat dikonfirmasi. Isian tetap tersedia; periksa koneksi lalu coba lagi.",
+    };
+  }
 }
+
 function todayDateStr() {
-  const d = new Date();
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+  return assignmentTimeInputs(new Date().toISOString()).date;
 }
 function nowTimeStr() {
-  const d = new Date();
-  return `${pad(d.getHours())}:${pad(d.getMinutes())}`;
+  return assignmentTimeInputs(new Date().toISOString()).time;
 }
 function formatDueDateTime(dueAt: string | null): string | null {
-  if (!dueAt) return null;
-  const d = new Date(dueAt);
-  const date = d.toLocaleDateString("id-ID", { day: "numeric", month: "long", year: "numeric" });
-  const time = d.toLocaleTimeString("id-ID", { hour: "2-digit", minute: "2-digit" });
-  return `${date}, ${time}`;
+  return dueAt ? formatAssignmentTime(dueAt) : null;
 }
 
 function SegmentedTabs<T extends string>({
@@ -245,14 +249,14 @@ function emptyQuizFormValues(): QuizFormValues {
 }
 
 function quizToFormValues(quiz: QuizRow): QuizFormValues {
-  const due = quiz.dueAt ? new Date(quiz.dueAt) : null;
+  const due = assignmentTimeInputs(quiz.dueAt);
   return {
     title: quiz.title,
     quizType: quiz.quizType ?? "latihan",
     learningObjectiveId: quiz.learningObjectiveId ?? "",
     description: quiz.description ?? "",
-    dueDate: due ? `${due.getFullYear()}-${pad(due.getMonth() + 1)}-${pad(due.getDate())}` : "",
-    dueTime: due ? `${pad(due.getHours())}:${pad(due.getMinutes())}` : "23:59",
+    dueDate: due.date,
+    dueTime: due.time,
     timerMinutes: quiz.timerMinutes != null ? String(quiz.timerMinutes) : "",
     passingGrade: quiz.passingGrade != null ? String(quiz.passingGrade) : "",
   };
@@ -276,11 +280,13 @@ function QuizFormFields({
   onChange,
   objectives,
   editorKey,
+  locked = false,
 }: {
   values: QuizFormValues;
   onChange: (patch: Partial<QuizFormValues>) => void;
   objectives: LearningObjectiveRow[];
   editorKey: number;
+  locked?: boolean;
 }) {
   const minDate = todayDateStr();
   const minTime = values.dueDate === minDate ? nowTimeStr() : undefined;
@@ -300,6 +306,7 @@ function QuizFormFields({
         <div>
           <Label>Tipe Kuis</Label>
           <Select
+            disabled={locked}
             value={values.quizType}
             onValueChange={(v) => onChange({ quizType: v as QuizType })}
           >
@@ -318,6 +325,7 @@ function QuizFormFields({
         <div>
           <Label>Tujuan Pembelajaran (TP) *</Label>
           <Select
+            disabled={locked}
             value={values.learningObjectiveId}
             onValueChange={(v) => onChange({ learningObjectiveId: v })}
           >
@@ -347,10 +355,20 @@ function QuizFormFields({
           />
         </div>
       </div>
+      {locked && (
+        <p className="text-sm text-muted-foreground">
+          Kuis sudah dipublikasikan. Hanya judul, instruksi, dan tenggat yang dapat diedit.
+        </p>
+      )}
+      <p className="text-xs text-muted-foreground">
+        Estimasi adalah perkiraan durasi dari guru, bukan hitung mundur. Pengumpulan ditutup pada
+        tenggat.
+      </p>
       <div className="grid gap-4 sm:grid-cols-3">
         <div>
-          <Label>Timer (menit)</Label>
+          <Label>Estimasi pengerjaan (menit)</Label>
           <Input
+            disabled={locked}
             name="timer_minutes"
             type="number"
             min={1}
@@ -361,7 +379,7 @@ function QuizFormFields({
           />
         </div>
         <div>
-          <Label>Tenggat Kuis *</Label>
+          <Label>Tenggat Kuis (WITA) *</Label>
           <div className="mt-1 space-y-2">
             <Input
               name="due_date"
@@ -384,6 +402,7 @@ function QuizFormFields({
         <div>
           <Label>Passing Grade (KKM)</Label>
           <Input
+            disabled={locked}
             name="passing_grade"
             type="number"
             min={0}
@@ -444,7 +463,7 @@ function AddQuizCard({
     formData.set("subject_id", subjectId);
 
     startTransition(async () => {
-      const result = await createQuiz(formData);
+      const result = await requestQuizChange(() => createQuiz(formData));
       if (result.ok) {
         toast.success(result.message);
         resetForm();
@@ -922,7 +941,7 @@ function AddQuestionCard({
     const formData = buildQuestionFormData(values);
     formData.set("assignment_id", assignmentId);
     startTransition(async () => {
-      const result = await addQuizQuestion(formData);
+      const result = await requestQuizChange(() => addQuizQuestion(formData));
       if (result.ok) {
         toast.success(result.message);
         resetForm();
@@ -1044,11 +1063,13 @@ function QuestionListItem({
   remainingBudget,
   isExpanded,
   onToggle,
+  locked,
 }: {
   question: QuizQuestionRow;
   remainingBudget: number;
   isExpanded: boolean;
   onToggle: () => void;
+  locked: boolean;
 }) {
   const [isPending, startTransition] = useTransition();
   const [editing, setEditing] = useState(false);
@@ -1091,7 +1112,7 @@ function QuestionListItem({
     const formData = buildQuestionFormData(values);
     formData.set("id", question.id);
     startTransition(async () => {
-      const result = await updateQuizQuestion(formData);
+      const result = await requestQuizChange(() => updateQuizQuestion(formData));
       if (result.ok) {
         toast.success(result.message);
         setEditing(false);
@@ -1103,7 +1124,7 @@ function QuestionListItem({
 
   function handleDelete() {
     startTransition(async () => {
-      const result = await deleteQuizQuestion(question.id);
+      const result = await requestQuizChange(() => deleteQuizQuestion(question.id));
       if (result.ok) toast.success(result.message);
       else toast.error(result.message);
     });
@@ -1111,7 +1132,9 @@ function QuestionListItem({
 
   function handleToggleActive() {
     startTransition(async () => {
-      const result = await setQuizQuestionActive(question.id, !question.isActive);
+      const result = await requestQuizChange(() =>
+        setQuizQuestionActive(question.id, !question.isActive),
+      );
       if (result.ok) toast.success(result.message);
       else toast.error(result.message);
     });
@@ -1148,7 +1171,7 @@ function QuestionListItem({
 
       <ExpandRegion expanded={isExpanded}>
         <div className="space-y-3 border-t p-3">
-          {editing ? (
+          {editing && !locked ? (
             <QuestionFormFields
               values={values}
               onChange={patch}
@@ -1157,66 +1180,73 @@ function QuestionListItem({
           ) : (
             <QuestionPreview question={question} />
           )}
-          <div className="flex flex-wrap gap-2">
-            {editing ? (
-              <>
-                <Button
-                  size="sm"
-                  variant="outline"
-                  className="rounded-md"
-                  disabled={isPending}
-                  onClick={handleCancelEdit}
-                >
-                  Batal
-                </Button>
-                <Button size="sm" className="rounded-md" disabled={isPending} onClick={handleSave}>
-                  {isPending ? "Menyimpan..." : "Simpan Perubahan"}
-                </Button>
-              </>
-            ) : (
-              <>
-                <Button size="sm" variant="outline" className="rounded-md" onClick={handleEdit}>
-                  Edit
-                </Button>
-                <Button
-                  size="sm"
-                  variant="outline"
-                  className="rounded-md"
-                  disabled={isPending}
-                  onClick={handleToggleActive}
-                >
-                  {question.isActive ? (
-                    <>
-                      <EyeOff className="mr-1.5 h-4 w-4" /> Nonaktifkan
-                    </>
-                  ) : (
-                    <>
-                      <Eye className="mr-1.5 h-4 w-4" /> Aktifkan
-                    </>
-                  )}
-                </Button>
-                <AlertDialog>
-                  <AlertDialogTrigger asChild>
-                    <Button size="sm" variant="outline" className="rounded-md text-destructive">
-                      <Trash2 className="mr-1.5 h-4 w-4" /> Hapus
-                    </Button>
-                  </AlertDialogTrigger>
-                  <AlertDialogContent>
-                    <AlertDialogHeader>
-                      <AlertDialogTitle>Hapus soal ini?</AlertDialogTitle>
-                      <AlertDialogDescription>
-                        Aksi ini tidak bisa dibatalkan.
-                      </AlertDialogDescription>
-                    </AlertDialogHeader>
-                    <AlertDialogFooter>
-                      <AlertDialogCancel>Batal</AlertDialogCancel>
-                      <AlertDialogAction onClick={handleDelete}>Hapus</AlertDialogAction>
-                    </AlertDialogFooter>
-                  </AlertDialogContent>
-                </AlertDialog>
-              </>
-            )}
-          </div>
+          {!locked && (
+            <div className="flex flex-wrap gap-2">
+              {editing ? (
+                <>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="rounded-md"
+                    disabled={isPending}
+                    onClick={handleCancelEdit}
+                  >
+                    Batal
+                  </Button>
+                  <Button
+                    size="sm"
+                    className="rounded-md"
+                    disabled={isPending}
+                    onClick={handleSave}
+                  >
+                    {isPending ? "Menyimpan..." : "Simpan Perubahan"}
+                  </Button>
+                </>
+              ) : (
+                <>
+                  <Button size="sm" variant="outline" className="rounded-md" onClick={handleEdit}>
+                    Edit
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="rounded-md"
+                    disabled={isPending}
+                    onClick={handleToggleActive}
+                  >
+                    {question.isActive ? (
+                      <>
+                        <EyeOff className="mr-1.5 h-4 w-4" /> Nonaktifkan
+                      </>
+                    ) : (
+                      <>
+                        <Eye className="mr-1.5 h-4 w-4" /> Aktifkan
+                      </>
+                    )}
+                  </Button>
+                  <AlertDialog>
+                    <AlertDialogTrigger asChild>
+                      <Button size="sm" variant="outline" className="rounded-md text-destructive">
+                        <Trash2 className="mr-1.5 h-4 w-4" /> Hapus
+                      </Button>
+                    </AlertDialogTrigger>
+                    <AlertDialogContent>
+                      <AlertDialogHeader>
+                        <AlertDialogTitle>Hapus soal ini?</AlertDialogTitle>
+                        <AlertDialogDescription>
+                          Aksi ini tidak bisa dibatalkan.
+                        </AlertDialogDescription>
+                      </AlertDialogHeader>
+                      <AlertDialogFooter>
+                        <AlertDialogCancel>Batal</AlertDialogCancel>
+                        <AlertDialogAction onClick={handleDelete}>Hapus</AlertDialogAction>
+                      </AlertDialogFooter>
+                    </AlertDialogContent>
+                  </AlertDialog>
+                </>
+              )}
+            </div>
+          )}
         </div>
       </ExpandRegion>
     </div>
@@ -1237,6 +1267,7 @@ function QuizListItem({
   onToggle: () => void;
 }) {
   const [isPending, startTransition] = useTransition();
+  const [publishConfirm, setPublishConfirm] = useState(false);
   const [editing, setEditing] = useState(false);
   const [values, setValues] = useState<QuizFormValues>(() => quizToFormValues(quiz));
   const [editorKey, setEditorKey] = useState(0);
@@ -1266,14 +1297,19 @@ function QuizListItem({
   }
 
   function handleSaveChanges() {
-    if (!values.title.trim() || !values.learningObjectiveId || !values.dueDate || !values.dueTime) {
+    if (
+      !values.title.trim() ||
+      (!quiz.isPublished && !values.learningObjectiveId) ||
+      !values.dueDate ||
+      !values.dueTime
+    ) {
       toast.error("Judul, TP, dan tenggat kuis wajib diisi.");
       return;
     }
     const formData = buildQuizFormData(values);
     formData.set("id", quiz.id);
     startTransition(async () => {
-      const result = await updateQuiz(formData);
+      const result = await requestQuizChange(() => updateQuiz(formData));
       if (result.ok) {
         toast.success(result.message);
         setEditing(false);
@@ -1285,7 +1321,7 @@ function QuizListItem({
 
   function handleDelete() {
     startTransition(async () => {
-      const result = await deleteQuiz(quiz.id);
+      const result = await requestQuizChange(() => deleteQuiz(quiz.id));
       if (result.ok) toast.success(result.message);
       else toast.error(result.message);
     });
@@ -1293,7 +1329,7 @@ function QuizListItem({
 
   function handleToggleActive() {
     startTransition(async () => {
-      const result = await setQuizActive(quiz.id, !quiz.isActive);
+      const result = await requestQuizChange(() => setQuizActive(quiz.id, !quiz.isActive));
       if (result.ok) toast.success(result.message);
       else toast.error(result.message);
     });
@@ -1301,7 +1337,7 @@ function QuizListItem({
 
   function handlePublish() {
     startTransition(async () => {
-      const result = await publishQuiz(quiz.id);
+      const result = await requestQuizChange(() => publishQuiz(quiz.id));
       if (result.ok) toast.success(result.message);
       else toast.error(result.message);
     });
@@ -1313,6 +1349,8 @@ function QuizListItem({
 
   const dueLabel = formatDueDateTime(quiz.dueAt);
   const remainingBudget = Math.max(0, 100 - quiz.totalPoints);
+  const hasSubmissions = quiz.submissionCount > 0;
+  const cannotDeactivate = quiz.isActive && hasSubmissions;
 
   return (
     <div className="@container rounded-md border">
@@ -1368,6 +1406,7 @@ function QuizListItem({
           <div className="space-y-3">
             {editing ? (
               <QuizFormFields
+                locked={quiz.isPublished}
                 values={values}
                 onChange={patch}
                 objectives={objectives}
@@ -1428,7 +1467,12 @@ function QuizListItem({
                       size="sm"
                       variant="outline"
                       className="rounded-md"
-                      disabled={isPending}
+                      disabled={isPending || cannotDeactivate}
+                      title={
+                        cannotDeactivate
+                          ? "Kuis sudah memiliki jawaban. Gunakan tenggat untuk menutup pengerjaan."
+                          : undefined
+                      }
                       onClick={handleToggleActive}
                     >
                       {quiz.isActive ? (
@@ -1444,7 +1488,17 @@ function QuizListItem({
                   )}
                   <AlertDialog>
                     <AlertDialogTrigger asChild>
-                      <Button size="sm" variant="outline" className="rounded-md text-destructive">
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        className="rounded-md text-destructive"
+                        disabled={isPending || hasSubmissions}
+                        title={
+                          hasSubmissions
+                            ? "Kuis tidak dapat dihapus karena sudah memiliki jawaban siswa."
+                            : undefined
+                        }
+                      >
                         <Trash2 className="mr-1.5 h-4 w-4" /> Hapus
                       </Button>
                     </AlertDialogTrigger>
@@ -1472,7 +1526,7 @@ function QuizListItem({
                           ? "Total bobot soal harus tepat 100 poin"
                           : undefined
                       }
-                      onClick={handlePublish}
+                      onClick={() => setPublishConfirm(true)}
                     >
                       <UploadCloud className="mr-1.5 h-4 w-4" /> Publikasikan Kuis
                     </Button>
@@ -1480,9 +1534,20 @@ function QuizListItem({
                 </>
               )}
             </div>
+            <p className="text-xs text-muted-foreground">
+              {hasSubmissions
+                ? `${quiz.submissionCount} jawaban tersimpan. Gunakan tenggat untuk menutup pengerjaan; kuis tidak dapat dinonaktifkan atau dihapus.`
+                : "Nonaktifkan untuk menarik kuis yang belum dikerjakan siswa. Setelah ada jawaban, gunakan tenggat untuk menutup pengerjaan."}
+            </p>
           </div>
 
           <div className="space-y-4 border-t pt-4">
+            {quiz.isPublished && (
+              <p className="rounded-lg bg-muted p-3 text-sm">
+                Soal dikunci sejak publikasi untuk menjaga jawaban dan nilai siswa. Buat kuis baru
+                jika ingin mengubah soal.
+              </p>
+            )}
             <div>
               <h3 className="font-display text-sm font-bold">Bank Soal</h3>
               <p className="mt-0.5 text-xs text-muted-foreground">
@@ -1508,19 +1573,24 @@ function QuizListItem({
               )}
             </div>
 
-            <AddQuestionCard
-              assignmentId={quiz.id}
-              remainingBudget={remainingBudget}
-              isExpanded={questionExpandedKey === ADD_QUESTION_KEY}
-              onToggle={() => toggleQuestion(ADD_QUESTION_KEY)}
-            />
+            {!quiz.isPublished && (
+              <AddQuestionCard
+                assignmentId={quiz.id}
+                remainingBudget={remainingBudget}
+                isExpanded={questionExpandedKey === ADD_QUESTION_KEY}
+                onToggle={() => toggleQuestion(ADD_QUESTION_KEY)}
+              />
+            )}
 
             <div className="space-y-2">
               {questions.map((q) => (
                 <QuestionListItem
+                  locked={quiz.isPublished}
                   key={q.id}
                   question={q}
-                  remainingBudget={Math.max(0, 100 - quiz.totalPoints + q.points)}
+                  remainingBudget={
+                    q.isActive ? Math.max(0, 100 - quiz.totalPoints + q.points) : 100
+                  }
                   isExpanded={questionExpandedKey === q.id}
                   onToggle={() => toggleQuestion(q.id)}
                 />
@@ -1530,20 +1600,40 @@ function QuizListItem({
               )}
             </div>
 
-            <div className="flex justify-center">
-              <Button
-                type="button"
-                size="sm"
-                variant="outline"
-                className="rounded-md"
-                onClick={() => toggleQuestion(ADD_QUESTION_KEY)}
-              >
-                <Plus className="mr-1.5 h-4 w-4" /> Tambah Pertanyaan
-              </Button>
-            </div>
+            {!quiz.isPublished && (
+              <div className="flex justify-center">
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  className="rounded-md"
+                  onClick={() => toggleQuestion(ADD_QUESTION_KEY)}
+                >
+                  <Plus className="mr-1.5 h-4 w-4" /> Tambah Pertanyaan
+                </Button>
+              </div>
+            )}
           </div>
         </div>
       </ExpandRegion>
+      <AlertDialog open={publishConfirm} onOpenChange={setPublishConfirm}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Publikasikan kuis?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Pastikan soal dan kunci jawaban sudah benar. Setelah dipublikasikan, soal, bobot, TP,
+              dan pengaturan penilaian dikunci. Judul, instruksi, serta tenggat tetap dapat
+              diperbarui.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Periksa Lagi</AlertDialogCancel>
+            <AlertDialogAction disabled={isPending} onClick={handlePublish}>
+              Publikasikan Kuis
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }

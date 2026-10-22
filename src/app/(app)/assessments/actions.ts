@@ -49,7 +49,51 @@ export async function fetchQuizAnswerReview(
   studentId: string,
 ): Promise<QuizAnswerReviewItem[]> {
   const currentUser = await getCurrentUser();
-  if (!currentUser || currentUser.role !== "teacher") return [];
+  if (
+    !currentUser ||
+    currentUser.role !== "teacher" ||
+    !z.string().uuid().safeParse(assignmentId).success ||
+    !z.string().uuid().safeParse(studentId).success
+  ) {
+    throw new Error("Hasil kuis tidak dapat diakses.");
+  }
+
+  const client = await createClient();
+  const [quizResult, studentResult] = await Promise.all([
+    client
+      .from("assignments")
+      .select("class_id, subject_id")
+      .eq("id", assignmentId)
+      .eq("kind", "quiz")
+      .maybeSingle(),
+    client
+      .from("profiles")
+      .select("class_id")
+      .eq("id", studentId)
+      .eq("role", "student")
+      .maybeSingle(),
+  ]);
+  if (quizResult.error || studentResult.error) {
+    throw new Error("Otorisasi hasil kuis belum dapat diperiksa. Coba lagi.");
+  }
+  if (
+    !quizResult.data ||
+    !studentResult.data ||
+    studentResult.data.class_id !== quizResult.data.class_id
+  ) {
+    throw new Error("Hasil kuis tidak sesuai dengan kelas siswa.");
+  }
+
+  const { data: teaching, error: teachingError } = await client
+    .from("class_teacher_subjects")
+    .select("id")
+    .eq("teacher_id", currentUser.id)
+    .eq("class_id", quizResult.data.class_id)
+    .eq("subject_id", quizResult.data.subject_id)
+    .maybeSingle();
+  if (teachingError) throw new Error("Penugasan Guru belum dapat diperiksa. Coba lagi.");
+  if (!teaching) throw new Error("Hasil kuis tidak sesuai dengan penugasanmu.");
+
   return getQuizAnswerReview(assignmentId, studentId);
 }
 
@@ -150,6 +194,8 @@ export async function gradeSubmission(
     };
 
   revalidatePath("/assessments");
+  revalidatePath("/gradebook");
+  revalidatePath("/grades");
   revalidatePath("/subjects", "layout");
   revalidatePath("/dashboard");
   return { ok: true, message: "Nilai berhasil disimpan." };

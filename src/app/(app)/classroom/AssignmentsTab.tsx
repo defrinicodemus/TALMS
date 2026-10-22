@@ -597,6 +597,8 @@ function AssignmentListItem({
   }
 
   const dueLabel = formatAssignmentTime(assignment.dueAt);
+  const hasSubmissions = assignment.submissionCount > 0;
+  const cannotDeactivate = assignment.isPublished && hasSubmissions;
 
   return (
     <div className="@container rounded-md border">
@@ -849,7 +851,12 @@ function AssignmentListItem({
               size="sm"
               variant="outline"
               className="rounded-md"
-              disabled={isPending || editing}
+              disabled={isPending || editing || cannotDeactivate}
+              title={
+                cannotDeactivate
+                  ? "Tugas sudah memiliki pengumpulan. Gunakan tenggat untuk menutup pengumpulan."
+                  : undefined
+              }
               onClick={handleToggleActive}
             >
               {assignment.isPublished ? (
@@ -868,7 +875,12 @@ function AssignmentListItem({
                   size="sm"
                   variant="outline"
                   className="rounded-md text-destructive"
-                  disabled={isPending || editing}
+                  disabled={isPending || editing || hasSubmissions}
+                  title={
+                    hasSubmissions
+                      ? "Tugas tidak dapat dihapus karena sudah memiliki pengumpulan siswa."
+                      : undefined
+                  }
                 >
                   <Trash2 className="mr-1.5 h-4 w-4" /> Hapus
                 </Button>
@@ -889,8 +901,9 @@ function AssignmentListItem({
             </AlertDialog>
           </div>
           <p className="text-xs text-muted-foreground">
-            Nonaktifkan menyembunyikan tugas dari siswa. Untuk menutup pengumpulan sambil tetap
-            menampilkan jawaban dan nilai, gunakan tenggat.
+            {hasSubmissions
+              ? `${assignment.submissionCount} pengumpulan tersimpan. Gunakan tenggat untuk menutup pengumpulan; tugas tidak dapat dinonaktifkan atau dihapus.`
+              : "Nonaktifkan menyembunyikan tugas dari siswa. Untuk menutup pengumpulan sambil tetap menampilkan jawaban dan nilai, gunakan tenggat."}
           </p>
         </div>
       </ExpandRegion>

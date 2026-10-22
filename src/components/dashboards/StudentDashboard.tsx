@@ -1,14 +1,16 @@
 "use client";
 
-import { useMemo } from "react";
+import { useMemo, useRef, useState, type ReactNode } from "react";
 import { useAuth } from "@/lib/auth-context";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import Link from "next/link";
 import { Megaphone, BookOpen, ArrowRight, ChevronRight } from "lucide-react";
 import type { getStudentDashboardData } from "@/lib/data/dashboard";
+import { formatAssignmentTime } from "@/lib/assignmentConstants";
 
 type Data = Awaited<ReturnType<typeof getStudentDashboardData>>;
+type ActivityFilter = "all" | "task" | "quiz";
 
 const LEARNING_TYPE_STYLES = {
   mapel: { badge: "bg-teal-100 text-teal-700" },
@@ -32,6 +34,8 @@ const LEARNING_TYPE_STYLES = {
 export function StudentDashboard({ data }: { data: Data }) {
   const { user } = useAuth();
   const firstName = user?.name.split(" ")[0] ?? "";
+  const [activityFilter, setActivityFilter] = useState<ActivityFilter>("all");
+  const activeActivitiesRef = useRef<HTMLDivElement>(null);
 
   const now = useMemo(() => new Date(), []);
   const dayLabel = now.toLocaleDateString("id-ID", { weekday: "long" });
@@ -43,6 +47,19 @@ export function StudentDashboard({ data }: { data: Data }) {
 
   const hasActivity =
     data.pendingTugasCount > 0 || data.pendingKuisCount > 0 || data.newMaterialsCount > 0;
+  const filteredActiveTasks = data.activeTasks.filter((activity) => {
+    if (activityFilter === "quiz") return activity.kind === "quiz";
+    if (activityFilter === "task") return activity.kind !== "quiz";
+    return true;
+  });
+  const visibleActiveTasks = filteredActiveTasks.slice(0, 3);
+
+  const showActivities = (filter: ActivityFilter) => {
+    setActivityFilter(filter);
+    window.requestAnimationFrame(() => {
+      activeActivitiesRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+    });
+  };
 
   return (
     <div className="space-y-6">
@@ -93,18 +110,23 @@ export function StudentDashboard({ data }: { data: Data }) {
           value={data.subjects.length}
           label="Mata Pelajaran"
           badgeClass={LEARNING_TYPE_STYLES.mapel.badge}
+          href="/subjects"
         />
         <QuickInfoCard
           emoji="📝"
           value={data.pendingTugasCount}
           label="Tugas Aktif"
           badgeClass={LEARNING_TYPE_STYLES.tugas.badge}
+          onClick={() => showActivities("task")}
+          isActive={activityFilter === "task"}
         />
         <QuickInfoCard
           emoji="❓"
           value={data.pendingKuisCount}
           label="Kuis Aktif"
           badgeClass={LEARNING_TYPE_STYLES.kuis.badge}
+          onClick={() => showActivities("quiz")}
+          isActive={activityFilter === "quiz"}
         />
       </div>
 
@@ -112,7 +134,7 @@ export function StudentDashboard({ data }: { data: Data }) {
         {/* Subjects */}
         <Card className="rounded-3xl border-0 p-6 shadow-soft lg:col-span-2">
           <div className="mb-4 flex items-center justify-between">
-            <h2 className="font-display text-xl font-bold">Mata Pelajaran Hari Ini</h2>
+            <h2 className="font-display text-xl font-bold">Mata Pelajaranmu</h2>
             <Link href="/subjects" className="text-xs font-medium text-primary hover:underline">
               Lihat semua →
             </Link>
@@ -123,7 +145,7 @@ export function StudentDashboard({ data }: { data: Data }) {
               const countLabel = subjectCountLabel(s);
               return (
                 <Link
-                  href="/subjects"
+                  href={`/subjects/${s.id}`}
                   key={s.id}
                   className="flex items-center gap-3 rounded-2xl border bg-card p-3 transition hover:border-primary hover:shadow-soft"
                 >
@@ -156,7 +178,7 @@ export function StudentDashboard({ data }: { data: Data }) {
                   {s.code}
                 </span>
                 <Link
-                  href="/subjects"
+                  href={`/subjects/${s.id}`}
                   className="group rounded-2xl border bg-card p-4 transition hover:-translate-y-0.5 hover:border-primary hover:shadow-soft"
                 >
                   <div
@@ -219,13 +241,39 @@ export function StudentDashboard({ data }: { data: Data }) {
 
       {/* Active tasks + Learning activity */}
       <div className="grid gap-6 lg:grid-cols-3">
-        <Card className="rounded-3xl border-0 p-6 shadow-soft lg:col-span-2">
-          <div className="mb-4 flex items-center gap-2">
-            <BookOpen className="h-5 w-5 text-primary" />
-            <h2 className="font-display text-xl font-bold">Tugas dan Kuis Aktif</h2>
+        <Card
+          ref={activeActivitiesRef}
+          id="aktivitas-aktif"
+          className="scroll-mt-20 rounded-3xl border-0 p-6 shadow-soft lg:col-span-2"
+        >
+          <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+            <div className="flex items-center gap-2">
+              <BookOpen className="h-5 w-5 text-primary" />
+              <h2 className="font-display text-xl font-bold">Tugas dan Kuis Aktif</h2>
+            </div>
+            <div className="flex gap-1 rounded-xl bg-muted p-1" aria-label="Filter aktivitas aktif">
+              <ActivityFilterButton
+                active={activityFilter === "all"}
+                onClick={() => setActivityFilter("all")}
+              >
+                Semua
+              </ActivityFilterButton>
+              <ActivityFilterButton
+                active={activityFilter === "task"}
+                onClick={() => setActivityFilter("task")}
+              >
+                Tugas
+              </ActivityFilterButton>
+              <ActivityFilterButton
+                active={activityFilter === "quiz"}
+                onClick={() => setActivityFilter("quiz")}
+              >
+                Kuis
+              </ActivityFilterButton>
+            </div>
           </div>
           <div className="space-y-3">
-            {data.activeTasks.map((a) => (
+            {visibleActiveTasks.map((a) => (
               <div key={a.id} className="flex flex-wrap items-center gap-4 rounded-2xl border p-4">
                 <div className="grid h-12 w-12 place-items-center rounded-xl bg-secondary text-xl">
                   {a.kind === "quiz" ? "❓" : "📌"}
@@ -235,16 +283,33 @@ export function StudentDashboard({ data }: { data: Data }) {
                     {a.kind === "quiz" ? "Kuis" : "Tugas"} {a.subject}
                   </div>
                   <div className="font-semibold">{a.title}</div>
-                  <div className="text-xs text-muted-foreground">Tenggat: {a.due}</div>
+                  <div className="text-xs text-muted-foreground">
+                    Tenggat: {formatAssignmentTime(a.dueAt)}
+                  </div>
                 </div>
-                <Button className="rounded-xl">Mulai Kerjakan</Button>
+                <Button asChild className="w-full rounded-xl sm:w-auto">
+                  <Link
+                    href={a.kind === "quiz" ? `/subjects/kuis/${a.id}` : `/subjects/tugas/${a.id}`}
+                  >
+                    Mulai Kerjakan
+                  </Link>
+                </Button>
               </div>
             ))}
-            {data.activeTasks.length === 0 && (
+            {filteredActiveTasks.length === 0 && (
               <p className="text-sm text-muted-foreground">
-                {data.hasAnyAssignments
-                  ? "Semua tugas dan kuis telah dikerjakan."
-                  : "Belum ada tugas dan kuis."}
+                {activityFilter === "task"
+                  ? "Tidak ada tugas aktif yang perlu dikerjakan."
+                  : activityFilter === "quiz"
+                    ? "Tidak ada kuis aktif yang perlu dikerjakan."
+                    : data.hasAnyAssignments
+                      ? "Semua tugas dan kuis aktif telah dikerjakan."
+                      : "Belum ada tugas dan kuis."}
+              </p>
+            )}
+            {filteredActiveTasks.length > visibleActiveTasks.length && (
+              <p className="text-xs text-muted-foreground">
+                Menampilkan 3 aktivitas dengan tenggat terdekat.
               </p>
             )}
           </div>
@@ -363,19 +428,52 @@ function subjectCountLabel(s: { materialCount: number; tugasCount: number; kuisC
   return parts.length > 0 ? parts.join(" • ") : null;
 }
 
+function ActivityFilterButton({
+  active,
+  onClick,
+  children,
+}: {
+  active: boolean;
+  onClick: () => void;
+  children: ReactNode;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      aria-pressed={active}
+      className={`rounded-lg px-3 py-1.5 text-xs font-medium transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${
+        active ? "bg-card text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground"
+      }`}
+    >
+      {children}
+    </button>
+  );
+}
+
 function QuickInfoCard({
   emoji,
   value,
   label,
   badgeClass,
+  href,
+  onClick,
+  isActive = false,
 }: {
   emoji: string;
   value: number;
   label: string;
   badgeClass: string;
+  href?: string;
+  onClick?: () => void;
+  isActive?: boolean;
 }) {
-  return (
-    <Card className="aspect-square w-32 shrink-0 rounded-2xl border-0 p-4 shadow-soft md:aspect-auto md:w-auto md:p-5">
+  const card = (
+    <Card
+      className={`h-full w-full rounded-2xl border p-4 text-left shadow-soft transition hover:-translate-y-0.5 hover:border-primary hover:shadow-glow md:p-5 ${
+        isActive ? "border-primary ring-2 ring-primary/15" : "border-transparent"
+      }`}
+    >
       <div className="flex h-full flex-col justify-center gap-2">
         <div className="flex items-center gap-2">
           <div
@@ -388,5 +486,29 @@ function QuickInfoCard({
         <div className="font-display text-2xl font-bold">{value}</div>
       </div>
     </Card>
+  );
+
+  const wrapperClass =
+    "aspect-square w-32 shrink-0 rounded-2xl text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 md:aspect-auto md:w-auto";
+
+  if (href) {
+    return (
+      <Link href={href} className={wrapperClass} aria-label={`Buka ${label}`}>
+        {card}
+      </Link>
+    );
+  }
+
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={wrapperClass}
+      aria-label={`Tampilkan ${label}`}
+      aria-pressed={isActive}
+      aria-controls="aktivitas-aktif"
+    >
+      {card}
+    </button>
   );
 }

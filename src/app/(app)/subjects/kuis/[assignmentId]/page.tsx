@@ -14,18 +14,14 @@ export default async function KuisDetailPage({
   const { assignmentId } = await params;
 
   const assignment = await getAssignmentForStudent(assignmentId, user.id);
-  if (!assignment) notFound();
+  if (!assignment || assignment.kind !== "quiz") notFound();
 
   return (
     <div className="space-y-6">
       <PageHeader
         icon="❓"
         title={assignment.title}
-        subtitle={
-          assignment.learningObjectiveTitle
-            ? `Capaian: ${assignment.learningObjectiveTitle}`
-            : undefined
-        }
+        subtitle="Kerjakan kuis dan pelajari pembahasannya setelah mengumpulkan."
         action={<BackButton href={`/subjects/${assignment.subjectId}?tab=kuis`} />}
       />
       <KuisDetailContent assignment={assignment} />

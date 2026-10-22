@@ -1,103 +1,120 @@
 import { createClient } from "@/lib/supabase/server";
 import { appliesToGrade } from "@/lib/data/subjects";
-import { round2 } from "@/lib/data/gradebook";
+import { calculateCurrentClassGrade, percentOf } from "@/lib/data/learningMetrics";
 
 export interface MonitoringClassRow {
   classId: string;
   className: string;
   studentCount: number;
-  attendancePercent: number;
-  tugasCompletionPercent: number;
-  kuisCompletionPercent: number;
+  attendancePercent: number | null;
+  tugasCompletionPercent: number | null;
+  kuisCompletionPercent: number | null;
 }
 
 export interface MonitoringPembelajaranData {
   academicYearLabel: string;
   semester: "ganjil" | "genap";
   totalActiveClasses: number;
-  averageAttendancePercent: number;
-  tugasCompletionPercent: number;
-  kuisCompletionPercent: number;
+  averageAttendancePercent: number | null;
+  tugasCompletionPercent: number | null;
+  kuisCompletionPercent: number | null;
   classRows: MonitoringClassRow[];
 }
 
 export async function getMonitoringPembelajaranData(): Promise<MonitoringPembelajaranData | null> {
   const supabase = await createClient();
-
-  const { data: activeYear } = await supabase
+  const activeYearResult = await supabase
     .from("academic_years")
     .select("id, year_label, semester")
     .eq("is_active", true)
     .maybeSingle();
-
+  if (activeYearResult.error) throw new Error("Tahun ajaran aktif belum dapat dimuat.");
+  const activeYear = activeYearResult.data;
   if (!activeYear) return null;
 
-  const { data: classes } = await supabase
+  const classesResult = await supabase
     .from("classes")
     .select("id, name")
     .eq("academic_year_id", activeYear.id)
     .order("grade_level");
-  const classIds = (classes ?? []).map((c) => c.id);
+  if (classesResult.error) throw new Error("Daftar kelas belum dapat dimuat.");
+  const classes = classesResult.data ?? [];
+  const classIds = classes.map((row) => row.id);
 
-  const [{ data: meetings }, { data: assignments }, { data: students }] = await Promise.all([
+  const [meetingsResult, assignmentsResult, studentsResult] = await Promise.all([
     classIds.length > 0
       ? supabase.from("class_meetings").select("id, class_id").in("class_id", classIds)
-      : Promise.resolve({ data: [] as { id: string; class_id: string }[] }),
+      : Promise.resolve({ data: [] as { id: string; class_id: string }[], error: null }),
     classIds.length > 0
-      ? supabase.from("assignments").select("id, class_id, kind").in("class_id", classIds)
-      : Promise.resolve({ data: [] as { id: string; class_id: string; kind: string }[] }),
+      ? supabase
+          .from("assignments")
+          .select("id, class_id, kind, is_active")
+          .in("class_id", classIds)
+          .eq("is_published", true)
+      : Promise.resolve({
+          data: [] as { id: string; class_id: string; kind: string; is_active: boolean }[],
+          error: null,
+        }),
     classIds.length > 0
       ? supabase
           .from("profiles")
           .select("id, class_id")
           .eq("role", "student")
           .in("class_id", classIds)
-      : Promise.resolve({ data: [] as { id: string; class_id: string | null }[] }),
+      : Promise.resolve({ data: [] as { id: string; class_id: string | null }[], error: null }),
   ]);
+  if (meetingsResult.error || assignmentsResult.error || studentsResult.error) {
+    throw new Error("Data monitoring pembelajaran belum dapat dimuat.");
+  }
+  const meetings = meetingsResult.data ?? [];
+  const assignments = (assignmentsResult.data ?? []).filter(
+    (assignment) => assignment.kind !== "quiz" || assignment.is_active,
+  );
+  const students = studentsResult.data ?? [];
 
-  const classIdByMeeting = new Map((meetings ?? []).map((m) => [m.id, m.class_id]));
-  const meetingIds = (meetings ?? []).map((m) => m.id);
-  const { data: attendanceRecords } =
+  const meetingIds = meetings.map((meeting) => meeting.id);
+  const assignmentIds = assignments.map((assignment) => assignment.id);
+  const [attendanceResult, submissionsResult] = await Promise.all([
     meetingIds.length > 0
-      ? await supabase
+      ? supabase
           .from("attendance_records")
           .select("status, meeting_id")
           .in("meeting_id", meetingIds)
-      : { data: [] as { status: string; meeting_id: string }[] };
-
-  const studentCountByClass = new Map<string, number>();
-  for (const s of students ?? []) {
-    if (!s.class_id) continue;
-    studentCountByClass.set(s.class_id, (studentCountByClass.get(s.class_id) ?? 0) + 1);
-  }
-
-  const assignmentIds = (assignments ?? []).map((a) => a.id);
-  const { data: submissions } =
+      : Promise.resolve({ data: [] as { status: string; meeting_id: string }[], error: null }),
     assignmentIds.length > 0
-      ? await supabase
+      ? supabase
           .from("submissions")
           .select("assignment_id, status")
           .in("assignment_id", assignmentIds)
-      : { data: [] as { assignment_id: string; status: string }[] };
-
-  const submittedByAssignment = new Map<string, number>();
-  for (const s of submissions ?? []) {
-    if (s.status !== "submitted" && s.status !== "graded") continue;
-    submittedByAssignment.set(
-      s.assignment_id,
-      (submittedByAssignment.get(s.assignment_id) ?? 0) + 1,
-    );
+      : Promise.resolve({ data: [] as { assignment_id: string; status: string }[], error: null }),
+  ]);
+  if (attendanceResult.error || submissionsResult.error) {
+    throw new Error("Rekap monitoring pembelajaran belum dapat dihitung.");
   }
 
-  // Per-class accumulators
+  const classIdByMeeting = new Map(meetings.map((meeting) => [meeting.id, meeting.class_id]));
   const attendanceByClass = new Map<string, { hadir: number; total: number }>();
-  for (const r of attendanceRecords ?? []) {
-    const classId = classIdByMeeting.get(r.meeting_id);
+  for (const record of attendanceResult.data ?? []) {
+    const classId = classIdByMeeting.get(record.meeting_id);
     if (!classId) continue;
-    const acc = attendanceByClass.get(classId) ?? { hadir: 0, total: 0 };
-    acc.total++;
-    if (r.status === "hadir") acc.hadir++;
-    attendanceByClass.set(classId, acc);
+    const summary = attendanceByClass.get(classId) ?? { hadir: 0, total: 0 };
+    summary.total++;
+    if (record.status === "hadir") summary.hadir++;
+    attendanceByClass.set(classId, summary);
+  }
+
+  const studentCountByClass = new Map<string, number>();
+  for (const student of students) {
+    if (!student.class_id) continue;
+    studentCountByClass.set(student.class_id, (studentCountByClass.get(student.class_id) ?? 0) + 1);
+  }
+  const submittedByAssignment = new Map<string, number>();
+  for (const submission of submissionsResult.data ?? []) {
+    if (submission.status !== "submitted" && submission.status !== "graded") continue;
+    submittedByAssignment.set(
+      submission.assignment_id,
+      (submittedByAssignment.get(submission.assignment_id) ?? 0) + 1,
+    );
   }
 
   const tugasByClass = new Map<string, { expected: number; actual: number }>();
@@ -106,18 +123,15 @@ export async function getMonitoringPembelajaranData(): Promise<MonitoringPembela
   let tugasActual = 0;
   let kuisExpected = 0;
   let kuisActual = 0;
-  for (const a of assignments ?? []) {
-    const expected = studentCountByClass.get(a.class_id) ?? 0;
-    // Clamp per-assignment so a stale/mismatched submission (e.g. a student
-    // record that no longer matches the assignment's class) can't inflate
-    // the aggregate ratio past what that single assignment could contribute.
-    const actual = Math.min(submittedByAssignment.get(a.id) ?? 0, expected);
-    const byClass = a.kind === "quiz" ? kuisByClass : tugasByClass;
-    const acc = byClass.get(a.class_id) ?? { expected: 0, actual: 0 };
-    acc.expected += expected;
-    acc.actual += actual;
-    byClass.set(a.class_id, acc);
-    if (a.kind === "quiz") {
+  for (const assignment of assignments) {
+    const expected = studentCountByClass.get(assignment.class_id) ?? 0;
+    const actual = Math.min(submittedByAssignment.get(assignment.id) ?? 0, expected);
+    const target = assignment.kind === "quiz" ? kuisByClass : tugasByClass;
+    const summary = target.get(assignment.class_id) ?? { expected: 0, actual: 0 };
+    summary.expected += expected;
+    summary.actual += actual;
+    target.set(assignment.class_id, summary);
+    if (assignment.kind === "quiz") {
       kuisExpected += expected;
       kuisActual += actual;
     } else {
@@ -126,32 +140,28 @@ export async function getMonitoringPembelajaranData(): Promise<MonitoringPembela
     }
   }
 
-  function percentOf(actual: number, expected: number): number {
-    return expected > 0 ? Math.min(100, Math.round((actual / expected) * 100)) : 0;
-  }
-
-  const classRows: MonitoringClassRow[] = (classes ?? []).map((c) => {
-    const attendance = attendanceByClass.get(c.id) ?? { hadir: 0, total: 0 };
-    const tugas = tugasByClass.get(c.id) ?? { expected: 0, actual: 0 };
-    const kuis = kuisByClass.get(c.id) ?? { expected: 0, actual: 0 };
+  const classRows = classes.map((classroom) => {
+    const attendance = attendanceByClass.get(classroom.id) ?? { hadir: 0, total: 0 };
+    const tugas = tugasByClass.get(classroom.id) ?? { expected: 0, actual: 0 };
+    const kuis = kuisByClass.get(classroom.id) ?? { expected: 0, actual: 0 };
     return {
-      classId: c.id,
-      className: c.name,
-      studentCount: studentCountByClass.get(c.id) ?? 0,
+      classId: classroom.id,
+      className: classroom.name,
+      studentCount: studentCountByClass.get(classroom.id) ?? 0,
       attendancePercent: percentOf(attendance.hadir, attendance.total),
       tugasCompletionPercent: percentOf(tugas.actual, tugas.expected),
       kuisCompletionPercent: percentOf(kuis.actual, kuis.expected),
     };
   });
-
-  const hadirCount = (attendanceRecords ?? []).filter((r) => r.status === "hadir").length;
-  const totalAttendance = (attendanceRecords ?? []).length;
+  const hadirCount = (attendanceResult.data ?? []).filter(
+    (record) => record.status === "hadir",
+  ).length;
 
   return {
     academicYearLabel: activeYear.year_label,
     semester: activeYear.semester,
     totalActiveClasses: classIds.length,
-    averageAttendancePercent: percentOf(hadirCount, totalAttendance),
+    averageAttendancePercent: percentOf(hadirCount, attendanceResult.data?.length ?? 0),
     tugasCompletionPercent: percentOf(tugasActual, tugasExpected),
     kuisCompletionPercent: percentOf(kuisActual, kuisExpected),
     classRows,
@@ -166,18 +176,13 @@ export interface ClassDetailSubjectRow {
   kuisCount: number;
 }
 
-export interface ClassDetailMaterialItem {
+export interface ClassDetailActivityItem {
   id: string;
   subjectId: string;
   title: string;
   createdAt: string;
-}
-
-export interface ClassDetailAssignmentItem {
-  id: string;
-  subjectId: string;
-  title: string;
-  createdAt: string;
+  dueAt: string | null;
+  status: "Aktif" | "Berlangsung" | "Tenggat Berakhir" | "Selesai";
 }
 
 export interface ClassMonitoringDetail {
@@ -186,110 +191,153 @@ export interface ClassMonitoringDetail {
   studentCount: number;
   academicYearLabel: string;
   semester: "ganjil" | "genap";
-  attendancePercent: number;
-  tugasCompletionPercent: number;
-  kuisCompletionPercent: number;
-  averageGradePercent: number;
+  attendancePercent: number | null;
+  tugasCompletionPercent: number | null;
+  kuisCompletionPercent: number | null;
+  averageGradePercent: number | null;
+  gradeIsFinal: boolean;
+  finalGradebookCount: number;
+  totalGradebookCount: number;
   subjectRows: ClassDetailSubjectRow[];
-  materialItems: ClassDetailMaterialItem[];
-  tugasItems: ClassDetailAssignmentItem[];
-  kuisItems: ClassDetailAssignmentItem[];
+  materialItems: ClassDetailActivityItem[];
+  tugasItems: ClassDetailActivityItem[];
+  kuisItems: ClassDetailActivityItem[];
 }
 
 export async function getClassMonitoringDetail(
   classId: string,
 ): Promise<ClassMonitoringDetail | null> {
   const supabase = await createClient();
-
-  const { data: activeYear } = await supabase
+  const activeYearResult = await supabase
     .from("academic_years")
     .select("id, year_label, semester")
     .eq("is_active", true)
     .maybeSingle();
+  if (activeYearResult.error) throw new Error("Tahun ajaran aktif belum dapat dimuat.");
+  const activeYear = activeYearResult.data;
   if (!activeYear) return null;
 
-  const { data: klass } = await supabase
+  const classResult = await supabase
     .from("classes")
     .select("id, name, grade_level")
     .eq("id", classId)
     .eq("academic_year_id", activeYear.id)
     .maybeSingle();
-  if (!klass) return null;
+  if (classResult.error) throw new Error("Kelas belum dapat dimuat.");
+  const classroom = classResult.data;
+  if (!classroom) return null;
 
   const [
-    { count: studentCount },
-    { data: subjects },
-    { data: meetings },
-    { data: materials },
-    { data: assignments },
+    studentsResult,
+    subjectsResult,
+    meetingsResult,
+    materialsResult,
+    assignmentsResult,
+    ctsResult,
+    locksResult,
+    gradesResult,
   ] = await Promise.all([
-    supabase
-      .from("profiles")
-      .select("id", { count: "exact", head: true })
-      .eq("class_id", classId)
-      .eq("role", "student"),
+    supabase.from("profiles").select("id").eq("class_id", classId).eq("role", "student"),
     supabase.from("subjects").select("id, name, min_grade, max_grade").order("name"),
     supabase.from("class_meetings").select("id").eq("class_id", classId),
-    supabase.from("materials").select("id, subject_id, title, created_at").eq("class_id", classId),
+    supabase
+      .from("materials")
+      .select("id, subject_id, title, created_at")
+      .eq("class_id", classId)
+      .eq("is_active", true),
     supabase
       .from("assignments")
-      .select("id, subject_id, title, kind, created_at")
-      .eq("class_id", classId),
+      .select("id, subject_id, title, kind, due_at, created_at, is_active, learning_objective_id")
+      .eq("class_id", classId)
+      .eq("is_published", true),
+    supabase.from("class_teacher_subjects").select("subject_id").eq("class_id", classId),
+    supabase.from("gradebook_locks").select("subject_id").eq("class_id", classId),
+    supabase.from("grades").select("student_id, subject_id, score").eq("class_id", classId),
   ]);
+  if (
+    studentsResult.error ||
+    subjectsResult.error ||
+    meetingsResult.error ||
+    materialsResult.error ||
+    assignmentsResult.error ||
+    ctsResult.error ||
+    locksResult.error ||
+    gradesResult.error
+  ) {
+    throw new Error("Detail monitoring kelas belum dapat dimuat.");
+  }
 
-  const meetingIds = (meetings ?? []).map((m) => m.id);
-  const { data: attendanceRecords } =
+  const students = studentsResult.data ?? [];
+  const materials = materialsResult.data ?? [];
+  const assignments = (assignmentsResult.data ?? []).filter(
+    (assignment) => assignment.kind !== "quiz" || assignment.is_active,
+  );
+  const meetingIds = (meetingsResult.data ?? []).map((meeting) => meeting.id);
+  const assignmentIds = assignments.map((assignment) => assignment.id);
+  const [attendanceResult, submissionsResult] = await Promise.all([
     meetingIds.length > 0
-      ? await supabase.from("attendance_records").select("status").in("meeting_id", meetingIds)
-      : { data: [] as { status: string }[] };
-
-  const assignmentIds = (assignments ?? []).map((a) => a.id);
-  const { data: submissions } =
+      ? supabase.from("attendance_records").select("status").in("meeting_id", meetingIds)
+      : Promise.resolve({ data: [] as { status: string }[], error: null }),
     assignmentIds.length > 0
-      ? await supabase
+      ? supabase
           .from("submissions")
-          .select("assignment_id, status, score")
+          .select("assignment_id, student_id, status, score")
           .in("assignment_id", assignmentIds)
-      : { data: [] as { assignment_id: string; status: string; score: number | null }[] };
+      : Promise.resolve({
+          data: [] as {
+            assignment_id: string;
+            student_id: string;
+            status: string;
+            score: number | null;
+          }[],
+          error: null,
+        }),
+  ]);
+  if (attendanceResult.error || submissionsResult.error) {
+    throw new Error("Rekap kelas belum dapat dihitung.");
+  }
 
   const submittedByAssignment = new Map<string, number>();
-  const gradedScores: number[] = [];
-  for (const s of submissions ?? []) {
-    if (s.status === "submitted" || s.status === "graded") {
-      submittedByAssignment.set(
-        s.assignment_id,
-        (submittedByAssignment.get(s.assignment_id) ?? 0) + 1,
-      );
-    }
-    if (s.status === "graded" && s.score != null) {
-      gradedScores.push(s.score);
-    }
+  for (const submission of submissionsResult.data ?? []) {
+    if (submission.status !== "submitted" && submission.status !== "graded") continue;
+    submittedByAssignment.set(
+      submission.assignment_id,
+      (submittedByAssignment.get(submission.assignment_id) ?? 0) + 1,
+    );
   }
 
-  function percentOf(actual: number, expected: number): number {
-    return expected > 0 ? Math.min(100, Math.round((actual / expected) * 100)) : 0;
-  }
-
-  const expectedPerAssignment = studentCount ?? 0;
-  const materialItems: ClassDetailMaterialItem[] = (materials ?? []).map((m) => ({
-    id: m.id,
-    subjectId: m.subject_id,
-    title: m.title,
-    createdAt: m.created_at,
+  const expectedPerAssignment = students.length;
+  const lockedSubjectIds = new Set((locksResult.data ?? []).map((lock) => lock.subject_id));
+  const materialItems: ClassDetailActivityItem[] = materials.map((material) => ({
+    id: material.id,
+    subjectId: material.subject_id,
+    title: material.title,
+    createdAt: material.created_at,
+    dueAt: null,
+    status: "Aktif",
   }));
-  const tugasItems: ClassDetailAssignmentItem[] = [];
-  const kuisItems: ClassDetailAssignmentItem[] = [];
-
+  const tugasItems: ClassDetailActivityItem[] = [];
+  const kuisItems: ClassDetailActivityItem[] = [];
   let tugasExpected = 0;
   let tugasActual = 0;
   let kuisExpected = 0;
   let kuisActual = 0;
-  for (const a of assignments ?? []) {
-    // Clamp per-assignment so a stale/mismatched submission can't inflate
-    // the aggregate ratio past what that single assignment could contribute.
-    const actual = Math.min(submittedByAssignment.get(a.id) ?? 0, expectedPerAssignment);
-    const item = { id: a.id, subjectId: a.subject_id, title: a.title, createdAt: a.created_at };
-    if (a.kind === "quiz") {
+  for (const assignment of assignments) {
+    const actual = Math.min(submittedByAssignment.get(assignment.id) ?? 0, expectedPerAssignment);
+    const status = lockedSubjectIds.has(assignment.subject_id)
+      ? "Selesai"
+      : assignment.due_at && new Date(assignment.due_at).getTime() <= Date.now()
+        ? "Tenggat Berakhir"
+        : "Berlangsung";
+    const item: ClassDetailActivityItem = {
+      id: assignment.id,
+      subjectId: assignment.subject_id,
+      title: assignment.title,
+      createdAt: assignment.created_at,
+      dueAt: assignment.due_at,
+      status,
+    };
+    if (assignment.kind === "quiz") {
       kuisExpected += expectedPerAssignment;
       kuisActual += actual;
       kuisItems.push(item);
@@ -300,37 +348,58 @@ export async function getClassMonitoringDetail(
     }
   }
 
-  const hadirCount = (attendanceRecords ?? []).filter((r) => r.status === "hadir").length;
-  const totalAttendance = (attendanceRecords ?? []).length;
-
-  const visibleSubjects = (subjects ?? []).filter((s) =>
-    appliesToGrade(klass.grade_level, s.min_grade, s.max_grade),
+  const visibleSubjects = (subjectsResult.data ?? []).filter((subject) =>
+    appliesToGrade(classroom.grade_level, subject.min_grade, subject.max_grade),
   );
-  const subjectRows: ClassDetailSubjectRow[] = visibleSubjects.map((s) => ({
-    subjectId: s.id,
-    subjectName: s.name,
-    materiCount: materialItems.filter((m) => m.subjectId === s.id).length,
-    tugasCount: tugasItems.filter((t) => t.subjectId === s.id).length,
-    kuisCount: kuisItems.filter((k) => k.subjectId === s.id).length,
+  const subjectRows = visibleSubjects.map((subject) => ({
+    subjectId: subject.id,
+    subjectName: subject.name,
+    materiCount: materialItems.filter((item) => item.subjectId === subject.id).length,
+    tugasCount: tugasItems.filter((item) => item.subjectId === subject.id).length,
+    kuisCount: kuisItems.filter((item) => item.subjectId === subject.id).length,
   }));
-
-  // Each graded submission's score is already on a 0-100 scale, so summing
-  // scores and dividing by (count * 100) * 100 reduces to a plain average.
-  const averageGradePercent =
-    gradedScores.length > 0
-      ? round2(gradedScores.reduce((a, b) => a + b, 0) / gradedScores.length)
-      : 0;
+  const assignedSubjectIds = (ctsResult.data ?? [])
+    .map((row) => row.subject_id)
+    .filter((id) => visibleSubjects.some((subject) => subject.id === id));
+  const gradeSummary = calculateCurrentClassGrade({
+    studentIds: students.map((student) => student.id),
+    subjectIds: assignedSubjectIds,
+    lockedSubjectIds,
+    assignments: assignments.map((assignment) => ({
+      id: assignment.id,
+      subjectId: assignment.subject_id,
+      learningObjectiveId: assignment.learning_objective_id,
+      dueAt: assignment.due_at,
+    })),
+    submissions: (submissionsResult.data ?? []).map((submission) => ({
+      assignmentId: submission.assignment_id,
+      studentId: submission.student_id,
+      status: submission.status,
+      score: submission.score,
+    })),
+    finalGrades: (gradesResult.data ?? []).map((grade) => ({
+      studentId: grade.student_id,
+      subjectId: grade.subject_id,
+      score: grade.score,
+    })),
+  });
+  const hadirCount = (attendanceResult.data ?? []).filter(
+    (record) => record.status === "hadir",
+  ).length;
 
   return {
-    classId: klass.id,
-    className: klass.name,
-    studentCount: studentCount ?? 0,
+    classId: classroom.id,
+    className: classroom.name,
+    studentCount: students.length,
     academicYearLabel: activeYear.year_label,
     semester: activeYear.semester,
-    attendancePercent: percentOf(hadirCount, totalAttendance),
+    attendancePercent: percentOf(hadirCount, attendanceResult.data?.length ?? 0),
     tugasCompletionPercent: percentOf(tugasActual, tugasExpected),
     kuisCompletionPercent: percentOf(kuisActual, kuisExpected),
-    averageGradePercent,
+    averageGradePercent: gradeSummary.average,
+    gradeIsFinal: gradeSummary.isFinal,
+    finalGradebookCount: gradeSummary.finalGradebookCount,
+    totalGradebookCount: gradeSummary.totalGradebookCount,
     subjectRows,
     materialItems,
     tugasItems,
