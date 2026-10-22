@@ -12,7 +12,7 @@ export async function login(formData: FormData) {
   }
 
   const supabase = await createClient();
-  const notFoundError = "Akun tidak ditemukan. Coba salah satu akun demo di samping.";
+  const notFoundError = "Akun tidak ditemukan. Pastikan mengisi data dengan benar.";
 
   const { data: email } = await supabase.rpc("email_for_username", { p_username: username });
   if (!email) {

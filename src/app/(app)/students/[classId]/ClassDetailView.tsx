@@ -6,6 +6,7 @@ import { Card } from "@/components/ui/card";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import type { ClassMonitoringDetail } from "@/lib/data/monitoring";
 import { tone, BAR_CLASS } from "@/lib/monitoringTone";
+import { formatAssignmentTime } from "@/lib/assignmentConstants";
 
 const SEMESTER_LABEL: Record<"ganjil" | "genap", string> = {
   ganjil: "Ganjil",
@@ -22,12 +23,13 @@ interface ModalTarget {
 
 const MODAL_CONFIG: Record<ActivityKind, { title: string; col1: string; col2: string }> = {
   materi: { title: "Rincian Materi", col1: "Nama Materi", col2: "Tanggal Upload" },
-  tugas: { title: "Rincian Tugas", col1: "Nama Tugas", col2: "Tanggal Dibuat" },
-  kuis: { title: "Rincian Kuis", col1: "Nama Kuis", col2: "Tanggal Dibuat" },
+  tugas: { title: "Rincian Tugas", col1: "Nama Tugas", col2: "Tenggat" },
+  kuis: { title: "Rincian Kuis", col1: "Nama Kuis", col2: "Tenggat" },
 };
 
 function formatDate(iso: string) {
   return new Date(iso).toLocaleDateString("id-ID", {
+    timeZone: "Asia/Makassar",
     day: "numeric",
     month: "long",
     year: "numeric",
@@ -44,7 +46,17 @@ export function ClassDetailView({ data }: { data: ClassMonitoringDetail }) {
       kind === "materi" ? data.materialItems : kind === "tugas" ? data.tugasItems : data.kuisItems;
     return source
       .filter((item) => item.subjectId === subjectId)
-      .map((item) => ({ id: item.id, col1: item.title, col2: formatDate(item.createdAt) }));
+      .map((item) => ({
+        id: item.id,
+        col1: item.title,
+        col2:
+          kind === "materi"
+            ? formatDate(item.createdAt)
+            : item.dueAt
+              ? formatAssignmentTime(item.dueAt)
+              : "Tidak ada tenggat",
+        status: item.status,
+      }));
   }, [modal, data]);
 
   return (
@@ -88,6 +100,15 @@ export function ClassDetailView({ data }: { data: ClassMonitoringDetail }) {
         <MetricCard icon="📋" label="Penyelesaian Tugas" percent={data.tugasCompletionPercent} />
         <MetricCard icon="❓" label="Penyelesaian Kuis" percent={data.kuisCompletionPercent} />
         <MetricCard icon="⭐" label="Rata-rata Nilai" percent={data.averageGradePercent} isScore />
+      </div>
+
+      <div className="rounded-2xl bg-muted/50 px-4 py-3 text-sm text-muted-foreground">
+        <span className="font-medium text-foreground">
+          {data.finalGradebookCount} dari {data.totalGradebookCount} Buku Nilai sudah final.
+        </span>{" "}
+        {data.gradeIsFinal
+          ? "Rata-rata kelas memakai seluruh snapshot nilai final."
+          : "Rata-rata saat ini memakai rumus per TP dan masih dapat berubah."}
       </div>
 
       <Card className="rounded-3xl border-0 p-6 shadow-soft">
@@ -175,6 +196,7 @@ export function ClassDetailView({ data }: { data: ClassMonitoringDetail }) {
                     <tr>
                       <th className="px-4 py-2.5">{MODAL_CONFIG[modal.kind].col1}</th>
                       <th className="px-4 py-2.5">{MODAL_CONFIG[modal.kind].col2}</th>
+                      <th className="px-4 py-2.5">Status</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y">
@@ -182,11 +204,12 @@ export function ClassDetailView({ data }: { data: ClassMonitoringDetail }) {
                       <tr key={r.id}>
                         <td className="px-4 py-2.5 font-medium">{r.col1}</td>
                         <td className="px-4 py-2.5 text-muted-foreground">{r.col2}</td>
+                        <td className="px-4 py-2.5 text-muted-foreground">{r.status}</td>
                       </tr>
                     ))}
                     {modalRows.length === 0 && (
                       <tr>
-                        <td colSpan={2} className="px-4 py-6 text-center text-muted-foreground">
+                        <td colSpan={3} className="px-4 py-6 text-center text-muted-foreground">
                           Belum ada aktivitas.
                         </td>
                       </tr>
@@ -222,10 +245,10 @@ function MetricCard({
 }: {
   icon: string;
   label: string;
-  percent: number;
+  percent: number | null;
   isScore?: boolean;
 }) {
-  const t = tone(percent);
+  const t = tone(percent ?? 0);
   return (
     <Card className="rounded-3xl border-0 p-5 shadow-soft">
       <div className="grid h-10 w-10 place-items-center rounded-xl bg-emerald-100 text-lg">
@@ -233,11 +256,20 @@ function MetricCard({
       </div>
       <div className="mt-3 text-sm text-muted-foreground">{label}</div>
       <div className="mt-1 font-display text-2xl font-bold">
-        {percent}
-        {isScore ? "" : "%"}
+        {percent == null ? "—" : percent}
+        {percent == null || isScore ? "" : "%"}
       </div>
+      {percent == null && <div className="mt-1 text-xs text-muted-foreground">Belum ada data</div>}
+      {isScore && percent != null && (
+        <div className="mt-1 text-xs text-muted-foreground">
+          {label === "Rata-rata Nilai" ? "Lihat status finalisasi di bawah" : null}
+        </div>
+      )}
       <div className="mt-2 h-1.5 w-full overflow-hidden rounded-full bg-muted">
-        <div className={`h-full rounded-full ${BAR_CLASS[t]}`} style={{ width: `${percent}%` }} />
+        <div
+          className={`h-full rounded-full ${BAR_CLASS[t]}`}
+          style={{ width: `${percent ?? 0}%` }}
+        />
       </div>
     </Card>
   );

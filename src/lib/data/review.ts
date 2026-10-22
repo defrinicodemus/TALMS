@@ -1,9 +1,18 @@
+import {
+  buildQuizAnswerReview,
+  type QuizStoredAnswer,
+  type QuizAnswerReviewItem,
+} from "@/lib/quizReview";
+import type { QuizBankQuestion } from "@/lib/quizServer";
+export type { QuizAnswerReviewItem } from "@/lib/quizReview";
 import { createClient } from "@/lib/supabase/server";
+import { assignmentMethods } from "@/lib/assignmentConstants";
 
 export interface ReviewAssignmentRow {
   id: string;
   title: string;
   kind: string;
+  allowedMethods: ("text" | "photo")[];
   description: string | null;
   dueAt: string | null;
   learningObjectiveTitle: string | null;
@@ -17,11 +26,11 @@ export async function getReviewAssignments(
   subjectId: string,
 ): Promise<ReviewAssignmentRow[]> {
   const supabase = await createClient();
-  const [{ data: assignments }, { count: totalStudents }] = await Promise.all([
+  const [assignmentsResult, studentsResult] = await Promise.all([
     supabase
       .from("assignments")
       .select(
-        "id, title, kind, description, due_at, learning_objective_id, learning_objectives(title)",
+        "id, title, kind, allowed_methods, description, due_at, learning_objective_id, learning_objectives(title)",
       )
       .eq("class_id", classId)
       .eq("subject_id", subjectId)
@@ -33,15 +42,22 @@ export async function getReviewAssignments(
       .eq("class_id", classId)
       .eq("role", "student"),
   ]);
+  if (assignmentsResult.error || studentsResult.error) {
+    throw new Error("Daftar tugas belum dapat dimuat. Coba lagi.");
+  }
+  const assignments = assignmentsResult.data;
+  const totalStudents = studentsResult.count;
 
   const assignmentIds = (assignments ?? []).map((a) => a.id);
-  const { data: submissions } =
+  const submissionsResult =
     assignmentIds.length > 0
       ? await supabase
           .from("submissions")
           .select("assignment_id, status")
           .in("assignment_id", assignmentIds)
-      : { data: [] as { assignment_id: string; status: string }[] };
+      : { data: [] as { assignment_id: string; status: string }[], error: null };
+  if (submissionsResult.error) throw new Error("Status pengumpulan belum dapat dimuat. Coba lagi.");
+  const submissions = submissionsResult.data;
 
   const statsByAssignment = new Map<string, { submitted: number; graded: number }>();
   for (const s of submissions ?? []) {
@@ -55,6 +71,7 @@ export async function getReviewAssignments(
     id: a.id,
     title: a.title,
     kind: a.kind,
+    allowedMethods: assignmentMethods(a.allowed_methods, a.kind),
     description: a.description,
     dueAt: a.due_at,
     learningObjectiveTitle:
@@ -82,7 +99,7 @@ export async function getAssignmentSubmissions(
   classId: string,
 ): Promise<StudentSubmissionRow[]> {
   const supabase = await createClient();
-  const [{ data: students }, { data: submissions }] = await Promise.all([
+  const [studentsResult, submissionsResult] = await Promise.all([
     supabase
       .from("profiles")
       .select("id, full_name, avatar_emoji")
@@ -94,6 +111,11 @@ export async function getAssignmentSubmissions(
       .select("id, student_id, status, submitted_at, content_url, score, teacher_comment")
       .eq("assignment_id", assignmentId),
   ]);
+  if (studentsResult.error || submissionsResult.error) {
+    throw new Error("Jawaban siswa belum dapat dimuat. Coba lagi.");
+  }
+  const students = studentsResult.data;
+  const submissions = submissionsResult.data;
 
   const submissionByStudent = new Map((submissions ?? []).map((s) => [s.student_id, s]));
 
@@ -131,7 +153,7 @@ export interface QuizResultRow {
 
 export async function getQuizResults(classId: string, subjectId: string): Promise<QuizResultRow[]> {
   const supabase = await createClient();
-  const [{ data: quizzes }, { data: students }] = await Promise.all([
+  const [quizzesResult, studentsResult] = await Promise.all([
     supabase
       .from("assignments")
       .select("id, title, passing_grade")
@@ -147,9 +169,14 @@ export async function getQuizResults(classId: string, subjectId: string): Promis
       .eq("role", "student")
       .order("full_name"),
   ]);
+  if (quizzesResult.error || studentsResult.error) {
+    throw new Error("Hasil kuis belum dapat dimuat. Coba lagi.");
+  }
+  const quizzes = quizzesResult.data;
+  const students = studentsResult.data;
 
   const quizIds = (quizzes ?? []).map((q) => q.id);
-  const { data: submissions } =
+  const submissionsResult =
     quizIds.length > 0
       ? await supabase
           .from("submissions")
@@ -164,7 +191,10 @@ export async function getQuizResults(classId: string, subjectId: string): Promis
             status: string;
             submitted_at: string | null;
           }[],
+          error: null,
         };
+  if (submissionsResult.error) throw new Error("Nilai kuis belum dapat dimuat. Coba lagi.");
+  const submissions = submissionsResult.data;
 
   const subByKey = new Map(
     (submissions ?? []).map((s) => [`${s.assignment_id}:${s.student_id}`, s]),
@@ -188,120 +218,43 @@ export async function getQuizResults(classId: string, subjectId: string): Promis
   }));
 }
 
-export type ReviewQuestionType =
-  "multiple_choice" | "true_false" | "drag_and_drop" | "sequence" | "short_answer";
-
-const REVIEW_QUESTION_TYPE_LABEL: Record<ReviewQuestionType, string> = {
-  multiple_choice: "Pilihan Ganda",
-  true_false: "True or False",
-  drag_and_drop: "Drag and Drop",
-  sequence: "Langkah-langkah",
-  short_answer: "Isian Singkat",
-};
-
-export interface QuizAnswerReviewItem {
-  questionId: string;
-  questionTypeLabel: string;
-  questionText: string;
-  points: number;
-  pointsEarned: number;
-  studentAnswerLabel: string;
-  correctAnswerLabel: string;
-}
-
 export async function getQuizAnswerReview(
   assignmentId: string,
   studentId: string,
 ): Promise<QuizAnswerReviewItem[]> {
   const supabase = await createClient();
 
-  const [{ data: submission }, { data: questions }] = await Promise.all([
-    supabase
-      .from("submissions")
-      .select("id")
-      .eq("assignment_id", assignmentId)
-      .eq("student_id", studentId)
-      .maybeSingle(),
-    supabase
-      .from("quiz_questions")
-      .select(
-        "id, question_text, question_type, points, correct_answer_text, sort_order, quiz_options(id, option_text, is_correct, sort_order), quiz_pairs(id, drag_text, target_text, sort_order), quiz_steps(id, step_text, correct_order)",
-      )
-      .eq("assignment_id", assignmentId)
-      .order("sort_order", { ascending: true }),
-  ]);
+  const [{ data: submission, error: submissionError }, { data: questions, error: questionsError }] =
+    await Promise.all([
+      supabase
+        .from("submissions")
+        .select("id")
+        .eq("assignment_id", assignmentId)
+        .eq("student_id", studentId)
+        .maybeSingle(),
+      supabase
+        .from("quiz_questions")
+        .select(
+          "id, question_text, question_type, points, correct_answer_text, explanation, sort_order, is_active, quiz_options(id, option_text, is_correct, sort_order), quiz_pairs(id, drag_text, target_text, sort_order), quiz_steps(id, step_text, correct_order)",
+        )
+        .eq("assignment_id", assignmentId)
+        .order("sort_order", { ascending: true }),
+    ]);
 
+  if (submissionError || questionsError)
+    throw new Error("Hasil kuis belum dapat dibaca. Coba lagi.");
   if (!submission || !questions) return [];
 
-  const { data: answers } = await supabase
+  const { data: answers, error: answersError } = await supabase
     .from("quiz_answers")
     .select(
       "question_id, selected_option_id, true_false_answer, drag_drop_answer, sequence_answer, points_earned",
     )
     .eq("submission_id", submission.id);
 
-  const answerByQuestion = new Map((answers ?? []).map((a) => [a.question_id, a]));
-
-  return questions.map((q) => {
-    const ans = answerByQuestion.get(q.id);
-    const questionType = q.question_type as ReviewQuestionType;
-    let studentAnswerLabel = "Tidak dijawab";
-    let correctAnswerLabel = "-";
-
-    if (questionType === "multiple_choice") {
-      const options = (
-        q.quiz_options as unknown as { id: string; option_text: string; is_correct: boolean }[]
-      ).slice();
-      const chosen = options.find((o) => o.id === ans?.selected_option_id);
-      const correct = options.find((o) => o.is_correct);
-      studentAnswerLabel = chosen?.option_text ?? "Tidak dijawab";
-      correctAnswerLabel = correct?.option_text ?? "-";
-    } else if (questionType === "true_false") {
-      const label = (v: string | null) =>
-        v === "salah" ? "Salah" : v === "benar" ? "Benar" : null;
-      studentAnswerLabel = label(ans?.true_false_answer ?? null) ?? "Tidak dijawab";
-      correctAnswerLabel = label(q.correct_answer_text) ?? "-";
-    } else if (questionType === "drag_and_drop") {
-      const pairs = (
-        q.quiz_pairs as unknown as { id: string; drag_text: string; target_text: string }[]
-      ).slice();
-      const dragAnswer = (ans?.drag_drop_answer as Record<string, string> | null) ?? null;
-      if (dragAnswer) {
-        studentAnswerLabel = pairs
-          .map((p) => {
-            const chosenTargetId = dragAnswer[p.id];
-            const chosenTarget = pairs.find((t) => t.id === chosenTargetId);
-            return `${p.drag_text} → ${chosenTarget?.target_text ?? "?"}`;
-          })
-          .join("; ");
-      }
-      correctAnswerLabel = pairs.map((p) => `${p.drag_text} → ${p.target_text}`).join("; ");
-    } else if (questionType === "sequence") {
-      const steps = (
-        q.quiz_steps as unknown as { id: string; step_text: string; correct_order: number }[]
-      ).slice();
-      const stepById = new Map(steps.map((s) => [s.id, s.step_text]));
-      const sequenceAnswer = (ans?.sequence_answer as string[] | null) ?? null;
-      if (sequenceAnswer) {
-        studentAnswerLabel = sequenceAnswer
-          .map((id, i) => `${i + 1}. ${stepById.get(id) ?? "?"}`)
-          .join(" ");
-      }
-      correctAnswerLabel = steps
-        .slice()
-        .sort((a, b) => a.correct_order - b.correct_order)
-        .map((s, i) => `${i + 1}. ${s.step_text}`)
-        .join(" ");
-    }
-
-    return {
-      questionId: q.id,
-      questionTypeLabel: REVIEW_QUESTION_TYPE_LABEL[questionType] ?? questionType,
-      questionText: q.question_text,
-      points: q.points,
-      pointsEarned: ans?.points_earned ?? 0,
-      studentAnswerLabel,
-      correctAnswerLabel,
-    };
-  });
+  if (answersError) throw new Error("Jawaban belum dapat dibaca. Coba lagi.");
+  return buildQuizAnswerReview(
+    questions as unknown as QuizBankQuestion[],
+    (answers ?? []) as QuizStoredAnswer[],
+  );
 }

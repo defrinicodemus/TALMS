@@ -225,7 +225,7 @@ export function MasterKelasManager({
                       <SelectTrigger className="w-[180px] rounded-none">
                         <SelectValue placeholder="Belum ditugaskan" />
                       </SelectTrigger>
-                      <SelectContent>
+                      <SelectContent avoidCollisions collisionPadding={12}>
                         <SelectItem value={NONE}>— Belum ditugaskan —</SelectItem>
                         {teachers.map((t) => (
                           <SelectItem key={t.id} value={t.id}>

@@ -13,8 +13,8 @@ import {
   type LucideIcon,
 } from "lucide-react";
 import type { AssignmentContentRow, MaterialContentRow } from "@/lib/data/subjects";
+import { formatAssignmentTime } from "@/lib/assignmentConstants";
 import { ExpandableCardList } from "../ExpandableCardList";
-import { formatDueDate } from "../formatDueDate";
 import { cn } from "@/lib/utils";
 
 const KIND_ICON: Record<string, LucideIcon> = {
@@ -161,7 +161,7 @@ function TugasCard({ assignment: a }: { assignment: AssignmentContentRow }) {
           </span>
         </div>
         <div className="mt-0.5 text-xs text-muted-foreground">
-          Tenggat: {formatDueDate(a.dueAt)}
+          Tenggat: {formatAssignmentTime(a.dueAt)}
         </div>
         {a.status === "graded" && a.score != null ? (
           <div className="mt-0.5 font-display text-sm font-bold text-primary">
@@ -170,7 +170,7 @@ function TugasCard({ assignment: a }: { assignment: AssignmentContentRow }) {
         ) : (
           a.learningObjectiveTitle && (
             <div className="mt-0.5 truncate text-xs text-muted-foreground">
-              Capaian: {a.learningObjectiveTitle}
+              TP: {a.learningObjectiveTitle}
             </div>
           )
         )}

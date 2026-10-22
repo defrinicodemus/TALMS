@@ -1,6 +1,14 @@
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { computeQuizStatus, type QuizStatus } from "@/lib/quizStatus";
+import { assignmentMethods } from "@/lib/assignmentConstants";
+import { assignmentPhotoUrl } from "@/lib/assignmentFiles";
+import { getStudentQuizContext, readQuizBank, quizTargetToken } from "@/lib/quizServer";
+import {
+  buildQuizAnswerReview,
+  type QuizAnswerReviewItem,
+  type QuizStoredAnswer,
+} from "@/lib/quizReview";
 
 export type AssignmentStatus = "belum" | "dikerjakan" | "submitted" | "graded";
 
@@ -213,15 +221,22 @@ export async function getMaterialForStudent(
   };
 }
 
+export interface StudentAssignmentDetail extends AssignmentContentRow {
+  allowedMethods: ("text" | "photo")[];
+  submittedAt: string | null;
+  submissionUpdatedAt: string | null;
+  submissionPhotoUrl: string | null;
+}
+
 export async function getAssignmentForStudent(
   assignmentId: string,
   studentId: string | null,
-): Promise<AssignmentContentRow | null> {
+): Promise<StudentAssignmentDetail | null> {
   const supabase = await createClient();
   const { data: a } = await supabase
     .from("assignments")
     .select(
-      "id, subject_id, title, kind, description, due_at, learning_objective_id, learning_objectives(title), created_at, attachment_image_url, attachment_image_name, is_active",
+      "id, subject_id, title, kind, description, due_at, learning_objective_id, learning_objectives(title), created_at, attachment_image_url, attachment_image_name, is_active, allowed_methods",
     )
     .eq("id", assignmentId)
     .maybeSingle();
@@ -232,11 +247,13 @@ export async function getAssignmentForStudent(
     score: number | null;
     teacher_comment: string | null;
     content_url: string | null;
+    submitted_at: string | null;
+    updated_at: string;
   } | null = null;
   if (studentId) {
     const { data } = await supabase
       .from("submissions")
-      .select("status, score, teacher_comment, content_url")
+      .select("status, score, teacher_comment, content_url, submitted_at, updated_at")
       .eq("assignment_id", assignmentId)
       .eq("student_id", studentId)
       .maybeSingle();
@@ -268,6 +285,10 @@ export async function getAssignmentForStudent(
     score: sub?.score ?? null,
     teacherComment: sub?.teacher_comment ?? null,
     submissionContent: sub?.content_url ?? null,
+    allowedMethods: assignmentMethods(a.allowed_methods, a.kind),
+    submittedAt: sub?.submitted_at ?? null,
+    submissionUpdatedAt: sub?.updated_at ?? null,
+    submissionPhotoUrl: await assignmentPhotoUrl(sub?.content_url ?? null).catch(() => null),
     questionCount,
     createdAt: a.created_at,
     attachmentImageUrl: a.attachment_image_url,
@@ -305,6 +326,11 @@ export interface StudentQuizData {
   alreadySubmitted: boolean;
   score: number | null;
   timerMinutes: number | null;
+  passingGrade: number | null;
+  submittedAt: string | null;
+  dueAt: string | null;
+  isActive: boolean;
+  review: QuizAnswerReviewItem[] | null;
 }
 
 function shuffle<T>(items: T[]): T[] {
@@ -319,25 +345,38 @@ function shuffle<T>(items: T[]): T[] {
 export async function getQuizForStudent(
   assignmentId: string,
   studentId: string,
-): Promise<StudentQuizData> {
+  classId: string,
+): Promise<StudentQuizData | null> {
+  const assignment = await getStudentQuizContext(assignmentId, classId);
+  if (!assignment) return null;
   const supabase = await createClient();
-  const [{ data: assignment }, { data: questions }, { data: submission }] = await Promise.all([
-    supabase.from("assignments").select("timer_minutes").eq("id", assignmentId).single(),
-    supabase
-      .from("quiz_questions")
+  const { data: submission, error } = await supabase
+    .from("submissions")
+    .select("id, status, score, submitted_at")
+    .eq("assignment_id", assignmentId)
+    .eq("student_id", studentId)
+    .maybeSingle();
+  if (error) throw new Error("Hasil kuis belum dapat dibaca. Silakan coba lagi.");
+  const alreadySubmitted = submission?.status === "graded";
+  const expired = !!assignment.due_at && new Date(assignment.due_at).getTime() <= Date.now();
+  const questions =
+    !alreadySubmitted && assignment.is_active && !expired ? await readQuizBank(assignmentId) : [];
+  let review: QuizAnswerReviewItem[] | null = null;
+  // Only a confirmed graded submission unlocks its feedback. No browser flag
+  // or caller-supplied student ID can unlock another student's answer key.
+  if (alreadySubmitted && submission) {
+    const { data: answers, error: answerError } = await supabase
+      .from("quiz_answers")
       .select(
-        "id, question_text, question_type, points, sort_order, quiz_options(id, option_text, sort_order), quiz_pairs(id, drag_text, target_text), quiz_steps(id, step_text)",
+        "question_id, selected_option_id, true_false_answer, drag_drop_answer, sequence_answer, points_earned",
       )
-      .eq("assignment_id", assignmentId)
-      .eq("is_active", true)
-      .order("sort_order"),
-    supabase
-      .from("submissions")
-      .select("status, score")
-      .eq("assignment_id", assignmentId)
-      .eq("student_id", studentId)
-      .maybeSingle(),
-  ]);
+      .eq("submission_id", submission.id);
+    if (answerError) throw new Error("Pembahasan belum dapat dimuat. Silakan coba lagi.");
+    review = buildQuizAnswerReview(
+      await readQuizBank(assignmentId, true),
+      (answers ?? []) as QuizStoredAnswer[],
+    );
+  }
 
   const mapped: StudentQuizQuestion[] = (questions ?? []).map((q) => {
     const options = (
@@ -356,15 +395,25 @@ export async function getQuizForStudent(
       points: q.points,
       options,
       dragBlocks: shuffle(pairs.map((p) => ({ id: p.id, text: p.drag_text }))),
-      targetBlocks: shuffle(pairs.map((p) => ({ id: p.id, text: p.target_text }))),
+      targetBlocks: shuffle(
+        pairs.map((p) => ({
+          id: quizTargetToken(studentId, assignmentId, p.id),
+          text: p.target_text,
+        })),
+      ),
       steps: shuffle(steps.map((s) => ({ id: s.id, text: s.step_text }))),
     };
   });
 
   return {
     questions: mapped,
-    alreadySubmitted: submission?.status === "graded",
+    alreadySubmitted,
     score: submission?.score ?? null,
-    timerMinutes: assignment?.timer_minutes ?? null,
+    timerMinutes: assignment.timer_minutes ?? null,
+    passingGrade: assignment.passing_grade ?? null,
+    submittedAt: submission?.submitted_at ?? null,
+    dueAt: assignment.due_at,
+    isActive: assignment.is_active,
+    review,
   };
 }

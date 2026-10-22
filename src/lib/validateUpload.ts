@@ -3,6 +3,17 @@ export const SCHOOL_LOGO_UPLOAD = {
   maxSizeMB: 2,
 };
 
+// Keep material uploads below the existing 3 MB Server Action request limit.
+export const MATERIAL_UPLOAD = {
+  pdf: { allowedTypes: ["application/pdf"], maxSizeMB: 2 },
+  image: { allowedTypes: ["image/png", "image/jpeg", "image/webp"], maxSizeMB: 2 },
+};
+
+export function validateMaterialFile(file: File, kind: "pdf" | "image") {
+  if (!file.size) return { ok: false as const, message: "Pilih file yang tidak kosong." };
+  return validateFileUpload(file, MATERIAL_UPLOAD[kind]);
+}
+
 export function validateFileUpload(
   file: File,
   opts: { allowedTypes: string[]; maxSizeMB: number },

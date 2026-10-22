@@ -2,19 +2,19 @@
 @source "../";
 @import "tw-animate-css";
 
-@custom-variant dark (&:is(.dark *));
-
 @layer base {
   @font-face {
     font-family: "Fraunces";
-    src: url("https://fonts.gstatic.com/s/fraunces/v36/6NUh8FyLNQOQZAnv9bYEvDiIdE9Ea92uemAk.woff2") format("woff2");
+    src: url("https://fonts.gstatic.com/s/fraunces/v36/6NUh8FyLNQOQZAnv9bYEvDiIdE9Ea92uemAk.woff2")
+      format("woff2");
     font-weight: 400 900;
     font-style: normal;
     font-display: swap;
   }
   @font-face {
     font-family: "Plus Jakarta Sans";
-    src: url("https://fonts.gstatic.com/s/plusjakartasans/v8/LDIbaomQNQcsA88c7O9yZ4KMCoOg4IA6-91aHEjcWuA_qU79TGdmg9c.woff2") format("woff2");
+    src: url("https://fonts.gstatic.com/s/plusjakartasans/v8/LDIbaomQNQcsA88c7O9yZ4KMCoOg4IA6-91aHEjcWuA_qU79TGdmg9c.woff2")
+      format("woff2");
     font-weight: 200 800;
     font-style: normal;
     font-display: swap;
@@ -118,35 +118,6 @@
   --chart-5: oklch(0.6 0.18 320);
 }
 
-.dark {
-  --background: oklch(0.18 0.02 150);
-  --foreground: oklch(0.96 0.02 130);
-  --card: oklch(0.23 0.03 150);
-  --card-foreground: oklch(0.96 0.02 130);
-  --popover: oklch(0.23 0.03 150);
-  --popover-foreground: oklch(0.96 0.02 130);
-  --primary: oklch(0.78 0.14 145);
-  --primary-foreground: oklch(0.2 0.04 150);
-  --primary-soft: oklch(0.35 0.08 145);
-  --secondary: oklch(0.28 0.04 150);
-  --secondary-foreground: oklch(0.96 0.02 130);
-  --muted: oklch(0.28 0.03 150);
-  --muted-foreground: oklch(0.72 0.03 130);
-  --accent: oklch(0.4 0.1 145);
-  --accent-foreground: oklch(0.96 0.02 130);
-  --border: oklch(1 0 0 / 10%);
-  --input: oklch(1 0 0 / 14%);
-  --ring: oklch(0.78 0.14 145);
-  --sidebar: oklch(0.22 0.04 150);
-  --sidebar-foreground: oklch(0.96 0.02 130);
-  --sidebar-primary: oklch(0.78 0.14 145);
-  --sidebar-primary-foreground: oklch(0.2 0.04 150);
-  --sidebar-accent: oklch(0.3 0.05 150);
-  --sidebar-accent-foreground: oklch(0.96 0.02 130);
-  --sidebar-border: oklch(1 0 0 / 10%);
-  --sidebar-ring: oklch(0.78 0.14 145);
-}
-
 @layer base {
   * {
     border-color: var(--color-border);
@@ -172,8 +143,12 @@
     background-image:
       radial-gradient(oklch(0.5 0.14 145 / 0.06) 1px, transparent 1px),
       radial-gradient(oklch(0.5 0.14 145 / 0.04) 1px, transparent 1px);
-    background-size: 24px 24px, 48px 48px;
-    background-position: 0 0, 12px 12px;
+    background-size:
+      24px 24px,
+      48px 48px;
+    background-position:
+      0 0,
+      12px 12px;
   }
   .gradient-primary {
     background: linear-gradient(135deg, oklch(0.55 0.16 145), oklch(0.42 0.13 152));
@@ -189,8 +164,7 @@
     display: none;
   }
   .bg-transparency-grid {
-    background-image:
-      repeating-conic-gradient(#d9d9d9 0% 25%, #ffffff 0% 50%);
+    background-image: repeating-conic-gradient(#d9d9d9 0% 25%, #ffffff 0% 50%);
     background-size: 16px 16px;
   }
 

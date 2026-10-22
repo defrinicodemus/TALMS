@@ -1,4 +1,5 @@
 import { createClient } from "@/lib/supabase/server";
+import { assignmentMethods } from "@/lib/assignmentConstants";
 import { computeQuizStatus, type QuizStatus } from "@/lib/quizStatus";
 
 export type MaterialKind = "pdf" | "video" | "text" | "image" | "slideshow";
@@ -59,6 +60,7 @@ export interface AssignmentRow {
   isPublished: boolean;
   attachmentImageUrl: string | null;
   attachmentImageName: string | null;
+  submissionCount: number;
 }
 
 export async function getClassroomAssignments(
@@ -66,7 +68,7 @@ export async function getClassroomAssignments(
   subjectId: string,
 ): Promise<AssignmentRow[]> {
   const supabase = await createClient();
-  const { data } = await supabase
+  const { data, error } = await supabase
     .from("assignments")
     .select(
       "id, title, kind, description, due_at, learning_objective_id, learning_objectives(title), created_at, allowed_methods, is_published, attachment_image_url, attachment_image_name",
@@ -75,6 +77,24 @@ export async function getClassroomAssignments(
     .eq("subject_id", subjectId)
     .neq("kind", "quiz")
     .order("created_at", { ascending: false });
+  if (error) throw new Error("Daftar tugas belum dapat dimuat. Coba lagi.");
+
+  const assignmentIds = (data ?? []).map((assignment) => assignment.id);
+  const { data: submissionRows, error: submissionError } =
+    assignmentIds.length > 0
+      ? await supabase
+          .from("submissions")
+          .select("assignment_id")
+          .in("assignment_id", assignmentIds)
+      : { data: [] as { assignment_id: string }[], error: null };
+  if (submissionError) throw new Error("Jumlah pengumpulan tugas belum dapat dimuat. Coba lagi.");
+  const submissionCountByAssignment = new Map<string, number>();
+  for (const submission of submissionRows ?? []) {
+    submissionCountByAssignment.set(
+      submission.assignment_id,
+      (submissionCountByAssignment.get(submission.assignment_id) ?? 0) + 1,
+    );
+  }
 
   return (data ?? []).map((a) => ({
     id: a.id,
@@ -86,10 +106,11 @@ export async function getClassroomAssignments(
     learningObjectiveTitle:
       (a.learning_objectives as unknown as { title: string } | null)?.title ?? null,
     createdAt: a.created_at,
-    allowedMethods: (a.allowed_methods ?? []) as AssignmentMethod[],
+    allowedMethods: assignmentMethods(a.allowed_methods, a.kind),
     isPublished: a.is_published,
     attachmentImageUrl: a.attachment_image_url,
     attachmentImageName: a.attachment_image_name,
+    submissionCount: submissionCountByAssignment.get(a.id) ?? 0,
   }));
 }
 
@@ -111,11 +132,12 @@ export interface QuizRow {
   isPublished: boolean;
   isActive: boolean;
   status: QuizStatus;
+  submissionCount: number;
 }
 
 export async function getClassroomQuizzes(classId: string, subjectId: string): Promise<QuizRow[]> {
   const supabase = await createClient();
-  const { data } = await supabase
+  const { data, error } = await supabase
     .from("assignments")
     .select(
       "id, title, description, quiz_type, due_at, timer_minutes, passing_grade, learning_objective_id, learning_objectives(title), created_at, is_published, is_active, quiz_questions(id, points, is_active)",
@@ -124,6 +146,21 @@ export async function getClassroomQuizzes(classId: string, subjectId: string): P
     .eq("subject_id", subjectId)
     .eq("kind", "quiz")
     .order("created_at", { ascending: false });
+  if (error) throw new Error("Daftar kuis belum dapat dimuat. Coba lagi.");
+
+  const quizIds = (data ?? []).map((quiz) => quiz.id);
+  const { data: submissionRows, error: submissionError } =
+    quizIds.length > 0
+      ? await supabase.from("submissions").select("assignment_id").in("assignment_id", quizIds)
+      : { data: [] as { assignment_id: string }[], error: null };
+  if (submissionError) throw new Error("Jumlah jawaban kuis belum dapat dimuat. Coba lagi.");
+  const submissionCountByQuiz = new Map<string, number>();
+  for (const submission of submissionRows ?? []) {
+    submissionCountByQuiz.set(
+      submission.assignment_id,
+      (submissionCountByQuiz.get(submission.assignment_id) ?? 0) + 1,
+    );
+  }
 
   return (data ?? []).map((a) => {
     const questions =
@@ -147,6 +184,7 @@ export async function getClassroomQuizzes(classId: string, subjectId: string): P
       isPublished: a.is_published,
       isActive: a.is_active,
       status: computeQuizStatus(a.is_published, a.is_active, a.due_at),
+      submissionCount: submissionCountByQuiz.get(a.id) ?? 0,
     };
   });
 }

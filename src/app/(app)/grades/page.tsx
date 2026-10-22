@@ -1,22 +1,20 @@
 import { requireRole } from "@/lib/auth/guard";
-import { getStudentGrades } from "@/lib/data/gradebook";
+import { getStudentGradeContext, getStudentGrades } from "@/lib/data/gradebook";
 import { getSchoolReportData } from "@/lib/data/schoolReport";
 import { StudentGradesView } from "./StudentGradesView";
 import { SchoolGradesReport } from "./SchoolGradesReport";
 
-export default async function GradesPage({
-  searchParams,
-}: {
-  searchParams: Promise<{ yearId?: string }>;
-}) {
+export default async function GradesPage() {
   const user = await requireRole(["student", "principal"]);
 
   if (user.role === "student") {
-    const subjects = await getStudentGrades(user.id, user.classId ?? null);
-    return <StudentGradesView subjects={subjects} />;
+    const [subjects, context] = await Promise.all([
+      getStudentGrades(user.id, user.classId ?? null),
+      getStudentGradeContext(user.classId ?? null),
+    ]);
+    return <StudentGradesView subjects={subjects} context={context} />;
   }
 
-  const { yearId } = await searchParams;
-  const data = await getSchoolReportData(yearId);
+  const data = await getSchoolReportData();
   return <SchoolGradesReport data={data} />;
 }

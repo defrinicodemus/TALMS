@@ -5,6 +5,8 @@ import { requireRole } from "@/lib/auth/guard";
 import { getMonitoringPembelajaranData, type MonitoringClassRow } from "@/lib/data/monitoring";
 import { tone, BADGE_CLASS, BAR_CLASS } from "@/lib/monitoringTone";
 
+const SEMESTER_LABEL = { ganjil: "Ganjil", genap: "Genap" } as const;
+
 export default async function StudentsPage() {
   await requireRole(["principal"]);
 
@@ -27,7 +29,7 @@ export default async function StudentsPage() {
       <PageHeader
         icon="🎓"
         title="Monitoring Pembelajaran"
-        subtitle="Pantau aktivitas belajar, kehadiran, serta penyelesaian tugas dan kuis setiap kelas."
+        subtitle={`Pantau aktivitas belajar pada ${data.academicYearLabel} · Semester ${SEMESTER_LABEL[data.semester]}.`}
       />
 
       <div className="grid gap-4 md:grid-cols-4">
@@ -41,19 +43,19 @@ export default async function StudentsPage() {
           icon="🧑‍🤝‍🧑"
           iconClass="bg-blue-100 text-blue-600"
           label="Rata-rata Kehadiran"
-          value={`${data.averageAttendancePercent}%`}
+          value={formatPercent(data.averageAttendancePercent, "Belum ada presensi")}
         />
         <Stat
           icon="📋"
           iconClass="bg-amber-100 text-amber-600"
           label="Penyelesaian Tugas"
-          value={`${data.tugasCompletionPercent}%`}
+          value={formatPercent(data.tugasCompletionPercent, "Belum ada tugas")}
         />
         <Stat
           icon="❓"
           iconClass="bg-purple-100 text-purple-600"
           label="Penyelesaian Kuis"
-          value={`${data.kuisCompletionPercent}%`}
+          value={formatPercent(data.kuisCompletionPercent, "Belum ada kuis")}
         />
       </div>
 
@@ -96,11 +98,15 @@ function ClassMonitoringRow({ row }: { row: MonitoringClassRow }) {
       <td className="px-4 py-3 font-medium">{row.className}</td>
       <td className="px-4 py-3 text-muted-foreground">{row.studentCount}</td>
       <td className="px-4 py-3">
-        <span
-          className={`inline-flex rounded-full px-2.5 py-1 text-xs font-semibold ${BADGE_CLASS[tone(row.attendancePercent)]}`}
-        >
-          {row.attendancePercent}%
-        </span>
+        {row.attendancePercent == null ? (
+          <span className="text-xs text-muted-foreground">Belum ada presensi</span>
+        ) : (
+          <span
+            className={`inline-flex rounded-full px-2.5 py-1 text-xs font-semibold ${BADGE_CLASS[tone(row.attendancePercent)]}`}
+          >
+            {row.attendancePercent}%
+          </span>
+        )}
       </td>
       <td className="px-4 py-3">
         <PercentBar percent={row.tugasCompletionPercent} />
@@ -120,7 +126,10 @@ function ClassMonitoringRow({ row }: { row: MonitoringClassRow }) {
   );
 }
 
-function PercentBar({ percent }: { percent: number }) {
+function PercentBar({ percent }: { percent: number | null }) {
+  if (percent == null) {
+    return <span className="text-xs text-muted-foreground">Belum ada aktivitas</span>;
+  }
   const t = tone(percent);
   return (
     <div className="flex items-center gap-2">
@@ -130,6 +139,10 @@ function PercentBar({ percent }: { percent: number }) {
       <span className="text-xs font-medium text-muted-foreground">{percent}%</span>
     </div>
   );
+}
+
+function formatPercent(value: number | null, emptyLabel: string) {
+  return value == null ? emptyLabel : `${value}%`;
 }
 
 function Stat({

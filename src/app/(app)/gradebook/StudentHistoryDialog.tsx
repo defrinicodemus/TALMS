@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { Card } from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
 import { Dialog } from "@/components/ui/dialog";
 import { ResponsiveDialogContent } from "@/components/ResponsiveDialogContent";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -21,6 +22,7 @@ const FLUID_TITLE = "text-[clamp(1rem,0.875rem+0.45cqw,1.25rem)]";
 function formatDate(iso: string | null) {
   if (!iso) return "-";
   return new Date(iso).toLocaleDateString("id-ID", {
+    timeZone: "Asia/Makassar",
     day: "numeric",
     month: "long",
     year: "numeric",
@@ -42,21 +44,31 @@ export function StudentHistoryDialog({
 }) {
   const [data, setData] = useState<StudentHistoryData | null>(null);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [requestKey, setRequestKey] = useState(0);
 
   useEffect(() => {
     if (!student) return;
     let cancelled = false;
     setLoading(true);
-    fetchStudentHistory(student.studentId, classId, subjectId).then((result) => {
-      if (!cancelled) {
-        setData(result);
-        setLoading(false);
-      }
-    });
+    setError(null);
+    fetchStudentHistory(student.studentId, classId, subjectId)
+      .then((result) => {
+        if (!cancelled) setData(result);
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setData(null);
+          setError("Riwayat belajar belum dapat dimuat. Periksa koneksi lalu coba lagi.");
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
     return () => {
       cancelled = true;
     };
-  }, [student, classId, subjectId]);
+  }, [student, classId, subjectId, requestKey]);
 
   if (!student) return null;
 
@@ -69,7 +81,16 @@ export function StudentHistoryDialog({
         <div className="@container p-4 sm:p-6">
           {loading && <p className="text-sm text-muted-foreground">Memuat riwayat...</p>}
 
-          {!loading && data && (
+          {!loading && error && (
+            <div role="alert" className="space-y-3 text-sm">
+              <p>{error}</p>
+              <Button variant="outline" onClick={() => setRequestKey((value) => value + 1)}>
+                Coba Lagi
+              </Button>
+            </div>
+          )}
+
+          {!loading && !error && data && (
             <>
               {/* Mobile: vertical, card-based per TP */}
               <div className="space-y-4 sm:hidden">

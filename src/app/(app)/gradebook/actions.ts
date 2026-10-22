@@ -1,120 +1,140 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
+import { z } from "zod";
 import { createClient } from "@/lib/supabase/server";
 import { getCurrentUser } from "@/lib/data/profile";
-import { assertRole } from "@/lib/auth/guard";
 import {
-  averageOfTpAverages,
-  getGradebookData,
   getStudentHistory,
+  type GradebookReadiness,
+  type GradebookReadinessActivity,
+  type GradebookReadinessObjective,
   type StudentHistoryData,
 } from "@/lib/data/gradebook";
 
-export async function lockAndCalculateGrades(
+type GradebookActionResult = { ok: boolean; message: string };
+type ReadinessResult = { ok: true; data: GradebookReadiness } | { ok: false; message: string };
+
+const uuid = z.string().uuid();
+
+function validPair(classId: string, subjectId: string) {
+  return uuid.safeParse(classId).success && uuid.safeParse(subjectId).success;
+}
+
+function rawArray(value: unknown): Record<string, unknown>[] {
+  return Array.isArray(value)
+    ? value.filter(
+        (item): item is Record<string, unknown> =>
+          !!item && typeof item === "object" && !Array.isArray(item),
+      )
+    : [];
+}
+
+function mapActivity(value: Record<string, unknown>): GradebookReadinessActivity {
+  return {
+    assignmentId: String(value.assignment_id ?? ""),
+    title: String(value.title ?? "Aktivitas"),
+    dueAt: typeof value.due_at === "string" ? value.due_at : null,
+    submissionCount:
+      typeof value.submission_count === "number" ? value.submission_count : undefined,
+    studentCount: typeof value.student_count === "number" ? value.student_count : undefined,
+    studentNames: Array.isArray(value.student_names)
+      ? value.student_names.map((name) => String(name))
+      : undefined,
+  };
+}
+
+function mapReadiness(value: unknown): GradebookReadiness {
+  const raw =
+    value && typeof value === "object" && !Array.isArray(value)
+      ? (value as Record<string, unknown>)
+      : {};
+  const objectives: GradebookReadinessObjective[] = rawArray(raw.unassessed_objectives).map(
+    (objective) => ({
+      objectiveId: String(objective.objective_id ?? ""),
+      title: String(objective.title ?? "TP"),
+    }),
+  );
+  return {
+    canLock: raw.can_lock === true,
+    alreadyLocked: raw.already_locked === true,
+    studentCount: typeof raw.student_count === "number" ? raw.student_count : 0,
+    assessmentCount: typeof raw.assessment_count === "number" ? raw.assessment_count : 0,
+    openActivities: rawArray(raw.open_activities).map(mapActivity),
+    ungradedActivities: rawArray(raw.ungraded_activities).map(mapActivity),
+    missingActivities: rawArray(raw.missing_activities).map(mapActivity),
+    unlinkedActivities: rawArray(raw.unlinked_activities).map(mapActivity),
+    unassessedObjectives: objectives,
+  };
+}
+
+function refreshGradePages() {
+  revalidatePath("/gradebook");
+  revalidatePath("/grades");
+  revalidatePath("/assessments");
+  revalidatePath("/subjects", "layout");
+  revalidatePath("/dashboard");
+}
+
+export async function checkGradebookReadiness(
   classId: string,
   subjectId: string,
-): Promise<{ ok: boolean; message: string }> {
+): Promise<ReadinessResult> {
   const currentUser = await getCurrentUser();
-  if (!currentUser || currentUser.role !== "teacher") {
+  if (!currentUser || currentUser.role !== "teacher" || !validPair(classId, subjectId)) {
     return { ok: false, message: "Tidak diizinkan." };
   }
 
   const supabase = await createClient();
-
-  const { data: existingLock } = await supabase
-    .from("gradebook_locks")
-    .select("id")
-    .eq("class_id", classId)
-    .eq("subject_id", subjectId)
-    .maybeSingle();
-  if (existingLock) {
-    return { ok: false, message: "Buku nilai untuk kelas & mapel ini sudah dikunci sebelumnya." };
-  }
-
-  const { data: klass } = await supabase
-    .from("classes")
-    .select("academic_year_id")
-    .eq("id", classId)
-    .single();
-  if (!klass) return { ok: false, message: "Kelas tidak ditemukan." };
-
-  const gradebook = await getGradebookData(classId, subjectId);
-  if (gradebook.tpColumns.length === 0) {
-    return { ok: false, message: "Belum ada Tujuan Pembelajaran (TP) untuk kelas & mapel ini." };
-  }
-  if (gradebook.students.length === 0) {
-    return { ok: false, message: "Belum ada siswa di kelas ini." };
-  }
-
-  const periodMonth = new Date().toISOString().slice(0, 10);
-  const rows = gradebook.students.map((st) => {
-    const finalScore =
-      averageOfTpAverages(gradebook.tpColumns.map((tp) => st.tpAverages[tp.id])) ?? 0;
-    return {
-      student_id: st.studentId,
-      subject_id: subjectId,
-      class_id: classId,
-      academic_year_id: klass.academic_year_id,
-      period_month: periodMonth,
-      score: finalScore,
-      created_by: currentUser.id,
-    };
+  const { data, error } = await supabase.rpc("gradebook_readiness", {
+    p_class_id: classId,
+    p_subject_id: subjectId,
   });
+  if (error) return { ok: false, message: error.message };
+  return { ok: true, data: mapReadiness(data) };
+}
 
-  const { error: insertError } = await supabase.from("grades").insert(rows);
-  if (insertError) return { ok: false, message: insertError.message };
+export async function lockAndCalculateGrades(
+  classId: string,
+  subjectId: string,
+): Promise<GradebookActionResult> {
+  const currentUser = await getCurrentUser();
+  if (!currentUser || currentUser.role !== "teacher" || !validPair(classId, subjectId)) {
+    return { ok: false, message: "Tidak diizinkan." };
+  }
 
-  const { error: lockError } = await supabase.from("gradebook_locks").insert({
-    class_id: classId,
-    subject_id: subjectId,
-    locked_by: currentUser.id,
-    period_month: periodMonth,
+  const supabase = await createClient();
+  const { error } = await supabase.rpc("lock_gradebook", {
+    p_class_id: classId,
+    p_subject_id: subjectId,
   });
-  if (lockError) return { ok: false, message: lockError.message };
+  if (error) return { ok: false, message: error.message };
 
-  revalidatePath("/gradebook");
-  return { ok: true, message: "Nilai berhasil dikunci dan dihitung untuk semua siswa." };
+  refreshGradePages();
+  return { ok: true, message: "Nilai berhasil dihitung dan Buku Nilai sudah dikunci." };
 }
 
 export async function unlockGradebook(
   classId: string,
   subjectId: string,
-): Promise<{ ok: boolean; message: string }> {
+): Promise<GradebookActionResult> {
   const currentUser = await getCurrentUser();
-  if (!currentUser || currentUser.role !== "teacher") {
+  if (!currentUser || currentUser.role !== "teacher" || !validPair(classId, subjectId)) {
     return { ok: false, message: "Tidak diizinkan." };
   }
 
   const supabase = await createClient();
+  const { error } = await supabase.rpc("unlock_gradebook", {
+    p_class_id: classId,
+    p_subject_id: subjectId,
+  });
+  if (error) return { ok: false, message: error.message };
 
-  const { data: lock } = await supabase
-    .from("gradebook_locks")
-    .select("id, period_month")
-    .eq("class_id", classId)
-    .eq("subject_id", subjectId)
-    .maybeSingle();
-  if (!lock) return { ok: false, message: "Buku nilai ini belum dikunci." };
-
-  const { error: deleteGradesError } = await supabase
-    .from("grades")
-    .delete()
-    .eq("class_id", classId)
-    .eq("subject_id", subjectId)
-    .eq("period_month", lock.period_month);
-  if (deleteGradesError) return { ok: false, message: deleteGradesError.message };
-
-  const { error: deleteLockError } = await supabase
-    .from("gradebook_locks")
-    .delete()
-    .eq("id", lock.id);
-  if (deleteLockError) return { ok: false, message: deleteLockError.message };
-
-  revalidatePath("/gradebook");
+  refreshGradePages();
   return {
     ok: true,
     message:
-      "Kunci buku nilai berhasil dibuka. Nilai Akhir sebelumnya telah dihapus — nilai tugas/kuis individual tetap tersimpan dan bisa dinilai ulang.",
+      "Kunci Buku Nilai berhasil dibuka. Nilai akhir dihapus, sedangkan nilai tugas dan kuis tetap tersimpan.",
   };
 }
 
@@ -124,15 +144,38 @@ export async function fetchStudentHistory(
   subjectId: string,
 ): Promise<StudentHistoryData> {
   const currentUser = await getCurrentUser();
-  if (assertRole(currentUser, ["teacher"])) {
-    return {
-      materialsByTp: [],
-      tugasByTp: [],
-      kuisByTp: [],
-      materialsViewedPercent: 0,
-      averageTugas: null,
-      averageKuis: null,
-    };
+  if (
+    !currentUser ||
+    currentUser.role !== "teacher" ||
+    !uuid.safeParse(studentId).success ||
+    !validPair(classId, subjectId)
+  ) {
+    throw new Error("Riwayat belajar tidak dapat diakses.");
   }
+
+  const supabase = await createClient();
+  const [teachingResult, studentResult] = await Promise.all([
+    supabase
+      .from("class_teacher_subjects")
+      .select("id")
+      .eq("teacher_id", currentUser.id)
+      .eq("class_id", classId)
+      .eq("subject_id", subjectId)
+      .maybeSingle(),
+    supabase
+      .from("profiles")
+      .select("id")
+      .eq("id", studentId)
+      .eq("class_id", classId)
+      .eq("role", "student")
+      .maybeSingle(),
+  ]);
+  if (teachingResult.error || studentResult.error) {
+    throw new Error("Otorisasi riwayat belajar belum dapat diperiksa. Coba lagi.");
+  }
+  if (!teachingResult.data || !studentResult.data) {
+    throw new Error("Riwayat belajar tidak sesuai dengan penugasanmu.");
+  }
+
   return getStudentHistory(studentId, classId, subjectId);
 }

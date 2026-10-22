@@ -3,24 +3,18 @@
 import { useState } from "react";
 import { Card } from "@/components/ui/card";
 import { ExpandRegion } from "@/components/ExpandRegion";
-import { ChevronDown, FileText, Camera, Mic, Type } from "lucide-react";
+import { ChevronDown, FileText, Camera, Type } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { ReviewAssignmentRow, StudentSubmissionRow } from "@/lib/data/review";
 import { GradeSplitDialog } from "./GradeSplitDialog";
-
-const KIND_LABEL: Record<string, string> = {
-  essay: "Esai",
-  photo: "Foto",
-  audio: "Suara",
-  text: "Teks",
-};
-
-const KIND_ICON: Record<string, typeof FileText> = {
-  essay: FileText,
-  photo: Camera,
-  audio: Mic,
-  text: Type,
-};
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import { formatAssignmentTime } from "@/lib/assignmentConstants";
 
 const TABLE_STATUS_LABEL: Record<string, string> = {
   belum: "Belum Kumpul",
@@ -81,7 +75,23 @@ function AssignmentReviewRow({
   expanded: boolean;
   onToggle: () => void;
 }) {
-  const Icon = KIND_ICON[assignment.kind] ?? FileText;
+  const Icon =
+    assignment.allowedMethods.length > 1
+      ? FileText
+      : assignment.allowedMethods[0] === "photo"
+        ? Camera
+        : Type;
+  const methodLabel = assignment.allowedMethods
+    .map((method) => (method === "photo" ? "Foto" : "Teks"))
+    .join(" atau ");
+  const [filter, setFilter] = useState("all");
+  const filteredStudents = students.filter(
+    (student) =>
+      filter === "all" ||
+      (filter === "belum"
+        ? !["submitted", "graded"].includes(student.status)
+        : student.status === filter),
+  );
   const isOverdue = assignment.dueAt ? new Date(assignment.dueAt) < new Date() : false;
 
   return (
@@ -108,7 +118,7 @@ function AssignmentReviewRow({
             expanded ? "sm:hidden" : "sm:inline-block",
           )}
         >
-          {KIND_LABEL[assignment.kind] ?? assignment.kind}
+          {methodLabel}
         </span>
         <span
           className={cn(
@@ -179,11 +189,9 @@ function AssignmentReviewRow({
                   isOverdue ? "bg-muted text-muted-foreground" : "bg-primary-soft/60 text-primary",
                 )}
               >
-                {isOverdue ? "Selesai" : "Belum Selesai"}
+                {isOverdue ? "Tenggat berakhir" : "Pengumpulan dibuka"}
               </span>
-              <span className="rounded-md bg-muted px-2 py-0.5 text-xs">
-                {KIND_LABEL[assignment.kind] ?? assignment.kind}
-              </span>
+              <span className="rounded-md bg-muted px-2 py-0.5 text-xs">{methodLabel}</span>
             </div>
             <div className="flex flex-wrap items-center gap-1.5">
               <span className="rounded-md bg-muted px-2 py-0.5 text-xs">
@@ -215,11 +223,9 @@ function AssignmentReviewRow({
                   isOverdue ? "bg-muted text-muted-foreground" : "bg-primary-soft/60 text-primary",
                 )}
               >
-                {isOverdue ? "Selesai" : "Belum Selesai"}
+                {isOverdue ? "Tenggat berakhir" : "Pengumpulan dibuka"}
               </span>
-              <span className="rounded-md bg-muted px-2 py-0.5 text-xs">
-                {KIND_LABEL[assignment.kind] ?? assignment.kind}
-              </span>
+              <span className="rounded-md bg-muted px-2 py-0.5 text-xs">{methodLabel}</span>
               <span className="rounded-md bg-muted px-2 py-0.5 text-xs">
                 {assignment.gradedCount}/{assignment.totalStudents} dinilai
               </span>
@@ -231,6 +237,22 @@ function AssignmentReviewRow({
 
           {/* Student table (mobile + desktop, same column rules) */}
           <div className="border-t pt-3">
+            <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
+              <p className="text-xs text-muted-foreground">
+                Tenggat: {formatAssignmentTime(assignment.dueAt)}
+              </p>
+              <Select value={filter} onValueChange={setFilter}>
+                <SelectTrigger className="w-full sm:w-52" aria-label="Filter status pengumpulan">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">Semua siswa</SelectItem>
+                  <SelectItem value="belum">Belum Mengumpulkan</SelectItem>
+                  <SelectItem value="submitted">Belum Dinilai</SelectItem>
+                  <SelectItem value="graded">Sudah Dinilai</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
             <div className="overflow-x-auto rounded-md border">
               <table className="w-full min-w-120 table-fixed text-sm">
                 <thead className="border-b bg-muted/40 text-xs uppercase tracking-wider text-muted-foreground">
@@ -242,7 +264,7 @@ function AssignmentReviewRow({
                   </tr>
                 </thead>
                 <tbody>
-                  {students.map((s) => (
+                  {filteredStudents.map((s) => (
                     <tr key={s.studentId} className="border-b last:border-0">
                       <td className="truncate border-r p-2 font-medium">{s.studentName}</td>
                       <td className="border-r p-2 text-muted-foreground">{s.score ?? "-"}</td>
@@ -260,15 +282,19 @@ function AssignmentReviewRow({
                         <GradeSplitDialog
                           assignmentTitle={assignment.title}
                           student={s}
-                          disabled={!s.submissionId}
+                          disabled={!s.submissionId || !["submitted", "graded"].includes(s.status)}
                         />
                       </td>
                     </tr>
                   ))}
                 </tbody>
               </table>
-              {students.length === 0 && (
-                <p className="p-4 text-sm text-muted-foreground">Belum ada siswa di kelas ini.</p>
+              {filteredStudents.length === 0 && (
+                <p className="p-4 text-sm text-muted-foreground">
+                  {students.length
+                    ? "Tidak ada siswa dengan status ini."
+                    : "Belum ada siswa di kelas ini."}
+                </p>
               )}
             </div>
           </div>

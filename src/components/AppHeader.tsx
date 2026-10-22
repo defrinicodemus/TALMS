@@ -14,7 +14,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { useAuth } from "@/lib/auth-context";
-import { Bell, Moon, Sun } from "lucide-react";
+import { Bell } from "lucide-react";
 import type { AnnouncementRow } from "@/lib/data/announcements";
 import { NAV } from "@/components/AppSidebar";
 
@@ -29,12 +29,8 @@ export function AppHeader({
 }) {
   const { user } = useAuth();
   const path = usePathname();
-  const [dark, setDark] = useState(false);
   const [dismissed, setDismissed] = useState(false);
   const [, startTransition] = useTransition();
-  useEffect(() => {
-    document.documentElement.classList.toggle("dark", dark);
-  }, [dark]);
   useEffect(() => {
     setDismissed(false);
   }, [unreadCount]);
@@ -98,15 +94,6 @@ export function AppHeader({
             </DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>
-        <Button
-          size="icon"
-          variant="ghost"
-          className="rounded-full"
-          onClick={() => setDark((d) => !d)}
-          aria-label="Ganti tema"
-        >
-          {dark ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
-        </Button>
       </div>
     </header>
   );

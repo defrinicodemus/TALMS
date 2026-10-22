@@ -402,7 +402,7 @@ test("authenticated users cannot directly change trusted Auth metadata", async (
   ]);
 });
 
-test("the demo seed still provisions accounts and their related learning data", async () => {
+test("the account import creates only the requested teachers and students", async () => {
   // Only this isolated, in-memory test database is cleared. afterEach rolls back.
   await db.exec(`
     truncate auth.users, public.schools cascade;
@@ -425,24 +425,64 @@ test("the demo seed still provisions accounts and their related learning data", 
       identity_data jsonb, provider text, last_sign_in_at timestamptz,
       created_at timestamptz, updated_at timestamptz
     );
+    insert into public.schools (id, name) values ('${school}', 'School A');
+    insert into public.academic_years (id, school_id, year_label, semester, is_active)
+      values ('${id(30)}', '${school}', '2026/2027', 'ganjil', true);
+    insert into public.classes (id, school_id, academic_year_id, name, grade_level)
+    select gen_random_uuid(), '${school}', '${id(30)}', 'Kelas ' || grade, grade
+    from generate_series(1, 6) as grade;
   `);
-  await db.exec(await readFile(new URL("../../supabase/seed.sql", import.meta.url), "utf8"));
+  await applyMigration("20261022000001_import_teachers_students.sql");
+
   const { rows } = await db.query(
     "select role, count(*)::int as count from public.profiles group by role order by role",
   );
   assert.deepEqual(rows, [
-    { role: "student", count: 5 },
-    { role: "teacher", count: 3 },
-    { role: "principal", count: 1 },
-    { role: "admin", count: 1 },
+    { role: "student", count: 30 },
+    { role: "teacher", count: 9 },
   ]);
+
   const { rows: students } = await db.query(
-    "select school_id, class_id, nisn from public.profiles where role = 'student'",
+    `select p.school_id, p.class_id, p.nisn, p.username, c.grade_level
+     from public.profiles p join public.classes c on c.id = p.class_id
+     where p.role = 'student'`,
   );
-  assert.ok(students.every((student) => student.school_id && student.class_id && student.nisn));
-  const { rows: related } = await db.query(
-    "select (select count(*) from public.submissions)::int as submissions, (select count(*) from public.grades)::int as grades",
+  assert.ok(
+    students.every(
+      (student) =>
+        student.school_id === school &&
+        student.class_id &&
+        student.username === student.nisn &&
+        Number(student.nisn.slice(2, 4)) === student.grade_level,
+    ),
   );
-  assert.ok(related[0].submissions > 0);
-  assert.ok(related[0].grades > 0);
+
+  const { rows: teachers } = await db.query(
+    "select school_id, class_id, nip, username from public.profiles where role = 'teacher'",
+  );
+  assert.ok(
+    teachers.every(
+      (teacher) =>
+        teacher.school_id === school &&
+        teacher.class_id === null &&
+        teacher.username === teacher.nip,
+    ),
+  );
+
+  const { rows: authSummary } = await db.query(`
+    select
+      (select count(*)::int from auth.users) as users,
+      (select count(*)::int from auth.identities) as identities,
+      (select count(*)::int from auth.users u join public.profiles p on p.id = u.id
+       where u.email = p.username || '@nggodimeda.sch.id'
+         and u.email_confirmed_at is not null
+         and u.encrypted_password = crypt(p.username, u.encrypted_password)) as valid_logins,
+      (select count(*)::int from public.class_teacher_subjects) as assignments
+  `);
+  assert.deepEqual(authSummary[0], {
+    users: 39,
+    identities: 39,
+    valid_logins: 39,
+    assignments: 0,
+  });
 });

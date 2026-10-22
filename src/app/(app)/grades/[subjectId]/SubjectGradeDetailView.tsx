@@ -6,7 +6,12 @@ import { ChevronDown } from "lucide-react";
 import { PageHeader } from "@/components/PageHeader";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import type { StudentSubjectGradeDetail, TpGradeDetail } from "@/lib/data/gradebook";
+import type {
+  StudentGradeActivityRow,
+  StudentGradeContext,
+  StudentSubjectGradeDetail,
+  TpGradeDetail,
+} from "@/lib/data/gradebook";
 
 function formatDate(iso: string | null): string {
   if (!iso) return "-";
@@ -17,15 +22,23 @@ function formatDate(iso: string | null): string {
   });
 }
 
-export function SubjectGradeDetailView({ detail }: { detail: StudentSubjectGradeDetail }) {
-  const gradedActivityCount = detail.tugasGradedCount + detail.kuisGradedCount;
-
+export function SubjectGradeDetailView({
+  detail,
+  context,
+}: {
+  detail: StudentSubjectGradeDetail;
+  context: StudentGradeContext | null;
+}) {
   return (
     <div className="space-y-6">
       <PageHeader
         icon={detail.subjectEmoji ?? "📘"}
         title={detail.subjectName}
-        subtitle="Lihat perkembangan hasil belajarmu berdasarkan Tujuan Pembelajaran (TP)."
+        subtitle={
+          context
+            ? `${context.className} · ${context.periodLabel}`
+            : "Lihat perkembangan hasil belajarmu berdasarkan Tujuan Pembelajaran (TP)."
+        }
         action={
           <Button asChild variant="outline" className="rounded-xl">
             <Link href="/grades">← Kembali</Link>
@@ -46,15 +59,34 @@ export function SubjectGradeDetailView({ detail }: { detail: StudentSubjectGrade
           emoji="📋"
           value={
             detail.totalActivityCount > 0
-              ? `${gradedActivityCount}/${detail.totalActivityCount}`
+              ? `${detail.includedActivityCount}/${detail.totalActivityCount}`
               : undefined
           }
-          label="Aktivitas Dinilai"
+          label="Aktivitas Masuk Nilai"
+          caption={
+            detail.includedActivityCount > 0
+              ? `${detail.gradedActivityCount} dinilai · ${detail.missedActivityCount} tidak dikumpulkan`
+              : undefined
+          }
         />
         <HighestScoreCard
           highestScore={detail.highestScore}
           highestScoreCount={detail.highestScoreCount}
         />
+      </div>
+
+      <div className="rounded-2xl bg-muted/50 px-4 py-3 text-sm text-muted-foreground">
+        <span className="font-medium text-foreground">
+          {detail.assessedTpCount} dari {detail.totalTpCount} TP memiliki nilai.
+        </span>{" "}
+        {detail.isLocked
+          ? "Nilai akhir sudah dikunci oleh guru."
+          : "Nilai masih sementara dan dapat berubah sampai Buku Nilai dikunci."}
+        {(detail.waitingActivityCount > 0 || detail.openActivityCount > 0) && (
+          <span>
+            {` ${detail.waitingActivityCount} aktivitas menunggu penilaian dan ${detail.openActivityCount} masih terbuka.`}
+          </span>
+        )}
       </div>
 
       <div className="space-y-3">
@@ -120,18 +152,24 @@ function HighestScoreCard({
           🏅
         </div>
         {highestScore == null ? (
-          <div className="text-sm font-medium text-muted-foreground">Belum ada Nilai Tertinggi</div>
+          <div className="text-sm font-medium text-muted-foreground">
+            Belum ada nilai yang dapat dibandingkan
+          </div>
         ) : highestScoreCount > 1 ? (
           <>
-            <div className="font-display text-2xl font-bold">
-              {highestScoreCount}x {highestScore} !!
+            <div className="font-display text-2xl font-bold">{highestScore}</div>
+            <div className="text-xs font-medium text-muted-foreground">
+              {highestScore === 100
+                ? `Nilai sempurna diraih ${highestScoreCount} kali ⭐`
+                : `Nilai tertinggi diraih ${highestScoreCount} kali`}
             </div>
-            <div className="text-xs font-medium text-muted-foreground">Nilai Sempurna ⭐</div>
           </>
         ) : (
           <>
             <div className="font-display text-2xl font-bold">{highestScore}</div>
-            <div className="text-xs font-medium text-muted-foreground">Keren! 🎉</div>
+            <div className="text-xs font-medium text-muted-foreground">
+              {highestScore === 100 ? "Nilai sempurna ⭐" : "Nilai tertinggi"}
+            </div>
           </>
         )}
       </div>
@@ -168,33 +206,54 @@ function TpCard({ tp }: { tp: TpGradeDetail }) {
         <div className="overflow-hidden">
           <div className="mt-4 space-y-2 border-t pt-4">
             {tp.activities.length > 0 ? (
-              tp.activities.map((activity) => (
-                <div
-                  key={activity.id}
-                  className="flex items-center justify-between gap-3 rounded-2xl bg-muted/40 px-4 py-3"
-                >
-                  <div className="min-w-0 flex-1">
-                    <div className="flex flex-wrap items-center gap-2">
-                      <span className="truncate text-sm font-medium">{activity.title}</span>
-                      <span
-                        className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-medium ${
-                          activity.kind === "kuis"
-                            ? "bg-purple-100 text-purple-700"
-                            : "bg-amber-100 text-amber-700"
-                        }`}
-                      >
-                        {activity.kind === "kuis" ? "Kuis" : "Tugas"}
-                      </span>
+              tp.activities.map((activity) => {
+                const presentation = activityPresentation(activity);
+                return (
+                  <div
+                    key={activity.id}
+                    className="flex flex-wrap items-center justify-between gap-3 rounded-2xl bg-muted/40 px-4 py-3"
+                  >
+                    <div className="min-w-0 flex-1">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span className="truncate text-sm font-medium">{activity.title}</span>
+                        <span
+                          className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-medium ${
+                            activity.kind === "kuis"
+                              ? "bg-purple-100 text-purple-700"
+                              : "bg-amber-100 text-amber-700"
+                          }`}
+                        >
+                          {activity.kind === "kuis" ? "Kuis" : "Tugas"}
+                        </span>
+                        <span
+                          className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-medium ${presentation.badgeClass}`}
+                        >
+                          {presentation.label}
+                        </span>
+                      </div>
+                      <div className="mt-0.5 text-xs text-muted-foreground">
+                        {presentation.description}
+                      </div>
                     </div>
-                    <div className="mt-0.5 text-xs text-muted-foreground">
-                      Dinilai: {formatDate(activity.gradedAt)}
+                    <div className="flex shrink-0 items-center gap-2">
+                      <div className="min-w-8 text-right font-display text-lg font-bold text-primary">
+                        {activity.score ?? "—"}
+                      </div>
+                      <Button asChild size="sm" variant="outline" className="rounded-xl">
+                        <Link
+                          href={
+                            activity.kind === "kuis"
+                              ? `/subjects/kuis/${activity.id}`
+                              : `/subjects/tugas/${activity.id}`
+                          }
+                        >
+                          Lihat
+                        </Link>
+                      </Button>
                     </div>
                   </div>
-                  <div className="shrink-0 font-display text-lg font-bold text-primary">
-                    {activity.score}
-                  </div>
-                </div>
-              ))
+                );
+              })
             ) : (
               <p className="rounded-2xl bg-muted/40 px-4 py-3 text-sm text-muted-foreground">
                 Belum ada aktivitas yang dinilai untuk TP ini.
@@ -217,4 +276,33 @@ function TpCard({ tp }: { tp: TpGradeDetail }) {
       </button>
     </Card>
   );
+}
+
+function activityPresentation(activity: StudentGradeActivityRow) {
+  if (activity.status === "graded") {
+    return {
+      label: "Sudah Dinilai",
+      badgeClass: "bg-emerald-100 text-emerald-700",
+      description: `Dinilai ${formatDate(activity.gradedAt)}`,
+    };
+  }
+  if (activity.status === "missed") {
+    return {
+      label: "Tidak Dikumpulkan",
+      badgeClass: "bg-red-100 text-red-700",
+      description: "Tidak dikumpulkan sampai tenggat · Nilai 0",
+    };
+  }
+  if (activity.status === "waiting") {
+    return {
+      label: "Menunggu Penilaian",
+      badgeClass: "bg-amber-100 text-amber-700",
+      description: "Jawaban sudah dikumpulkan dan menunggu penilaian guru",
+    };
+  }
+  return {
+    label: "Belum Dikerjakan",
+    badgeClass: "bg-muted text-muted-foreground",
+    description: `Tenggat ${formatDate(activity.dueAt)}`,
+  };
 }
