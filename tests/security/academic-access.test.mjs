@@ -8,13 +8,15 @@ async function compile(path) {
     compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 },
   }).outputText;
 }
-const [accessCode, profileCode, middlewareCode] = await Promise.all([
+const [accessCode, profileCode, middlewareCode, statusRouteCode] = await Promise.all([
   compile("../../src/lib/auth/academic-access.ts"),
   compile("../../src/lib/data/profile.ts"),
   compile("../../src/lib/supabase/middleware.ts"),
+  compile("../../src/app/api/academic-status/route.ts"),
 ]);
 
 function setup({ role = "student", open = false, error = null, classVisible = true } = {}) {
+  const calls = { auth: 0, profile: 0, rpc: 0 };
   const profile = role
     ? {
         id: "user",
@@ -25,12 +27,19 @@ function setup({ role = "student", open = false, error = null, classVisible = tr
       }
     : null;
   const client = {
-    auth: { getUser: async () => ({ data: { user: role ? { id: "user" } : null } }) },
+    auth: {
+      getUser: async () => {
+        calls.auth++;
+        return { data: { user: role ? { id: "user" } : null } };
+      },
+    },
     rpc: async (name) => {
+      calls.rpc++;
       assert.equal(name, "academic_access_open");
       return { data: open, error };
     },
     from(table) {
+      calls.profile++;
       assert.equal(table, "profiles");
       return {
         select() {
@@ -73,7 +82,12 @@ function setup({ role = "student", open = false, error = null, classVisible = tr
     return exports;
   }
   modules["@/lib/auth/academic-access"] = evaluate(accessCode);
-  return { profile: evaluate(profileCode), middleware: evaluate(middlewareCode) };
+  return {
+    profile: evaluate(profileCode),
+    middleware: evaluate(middlewareCode),
+    statusRoute: evaluate(statusRouteCode),
+    calls,
+  };
 }
 function request(path, method = "GET") {
   return {
@@ -98,7 +112,8 @@ for (const role of ["student", "teacher", "principal"]) {
       assert.equal(result.data, "/academic-maintenance");
     }
     assert.equal((await middleware.updateSession(request("/api/reports/school-pdf"))).status, 503);
-    assert.equal((await middleware.updateSession(request("/api/academic-status"))).status, 503);
+    assert.equal((await middleware.updateSession(request("/api/academic-status"))).kind, "next");
+    assert.equal((await middleware.updateSession(request("/"))).data, "/academic-maintenance");
     assert.equal((await middleware.updateSession(request("/academic-maintenance"))).kind, "next");
     assert.equal(
       (await middleware.updateSession(request("/academic-maintenance", "POST"))).kind,
@@ -115,12 +130,14 @@ test("access-query failure fails closed for a non-admin and does not lock out ad
   const { profile, middleware } = setup({ role: "admin", error });
   assert.equal((await profile.getCurrentUser()).role, "admin");
   assert.equal((await middleware.updateSession(request("/academic"))).kind, "next");
+  assert.equal((await middleware.updateSession(request("/"))).data, "/dashboard");
 });
 
 test("unauthenticated users can reach login but not maintenance or protected pages", async () => {
   const { profile, middleware } = setup({ role: null });
   assert.equal(await profile.getCurrentUser(), null);
   assert.equal((await middleware.updateSession(request("/login"))).kind, "next");
+  assert.equal((await middleware.updateSession(request("/"))).data, "/login");
   assert.equal((await middleware.updateSession(request("/academic-maintenance"))).data, "/login");
 });
 
@@ -128,6 +145,34 @@ test("after reopening, requests and login redirects return to the normal app", a
   const { middleware } = setup({ open: true });
   assert.equal((await middleware.updateSession(request("/subjects"))).kind, "next");
   assert.equal((await middleware.updateSession(request("/login"))).data, "/dashboard");
+  assert.equal((await middleware.updateSession(request("/"))).data, "/dashboard");
+});
+
+test("academic status endpoint authenticates exactly once after its middleware bypass", async () => {
+  const bypass = setup({ role: "student", open: true });
+  assert.equal(
+    (await bypass.middleware.updateSession(request("/api/academic-status"))).kind,
+    "next",
+  );
+  assert.deepEqual(bypass.calls, { auth: 0, profile: 0, rpc: 0 });
+
+  const allowed = setup({ role: "student", open: true });
+  const allowedResult = await allowed.statusRoute.GET();
+  assert.equal(allowedResult.status, 200);
+  assert.deepEqual(allowedResult.data, { open: true });
+  assert.deepEqual(allowed.calls, { auth: 1, profile: 1, rpc: 1 });
+
+  const admin = setup({ role: "admin", error: { message: "unavailable" } });
+  const adminResult = await admin.statusRoute.GET();
+  assert.equal(adminResult.status, 200);
+  assert.deepEqual(adminResult.data, { open: true });
+  assert.deepEqual(admin.calls, { auth: 1, profile: 1, rpc: 0 });
+
+  const anonymous = setup({ role: null });
+  const anonymousResult = await anonymous.statusRoute.GET();
+  assert.equal(anonymousResult.status, 401);
+  assert.deepEqual(anonymousResult.data, { open: false });
+  assert.deepEqual(anonymous.calls, { auth: 1, profile: 0, rpc: 0 });
 });
 
 test("an inactive stored placement cannot become the student operational class", async () => {
