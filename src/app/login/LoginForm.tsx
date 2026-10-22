@@ -14,6 +14,8 @@ import {
   Copyright,
   MapPin,
   Phone,
+  Eye,
+  EyeOff,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { login } from "./actions";
@@ -37,6 +39,7 @@ export function LoginForm({
   const err = searchParams.get("error");
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
+  const [showPassword, setShowPassword] = useState(false);
   const [forgotOpen, setForgotOpen] = useState(false);
 
   return (
@@ -122,14 +125,32 @@ export function LoginForm({
               </div>
               <div className="space-y-1.5">
                 <Label htmlFor="p">Kata Sandi</Label>
-                <Input
-                  id="p"
-                  name="password"
-                  type="password"
-                  placeholder="Sandi Dari Admin Sekolah"
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                />
+                <div className="relative">
+                  <Input
+                    id="p"
+                    name="password"
+                    type={showPassword ? "text" : "password"}
+                    autoComplete="current-password"
+                    placeholder="Sandi Dari Admin Sekolah"
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value)}
+                    className="pr-10"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowPassword((visible) => !visible)}
+                    aria-label={showPassword ? "Sembunyikan kata sandi" : "Tampilkan kata sandi"}
+                    aria-pressed={showPassword}
+                    title={showPassword ? "Sembunyikan kata sandi" : "Tampilkan kata sandi"}
+                    className="absolute inset-y-0 right-0 grid w-10 place-items-center text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring"
+                  >
+                    {showPassword ? (
+                      <EyeOff className="h-4 w-4" aria-hidden="true" />
+                    ) : (
+                      <Eye className="h-4 w-4" aria-hidden="true" />
+                    )}
+                  </button>
+                </div>
               </div>
               {err && (
                 <div className="rounded-xl bg-destructive/10 px-3 py-2 text-xs text-destructive">
